@@ -54,7 +54,7 @@
     { title: 'Plan de inversión', col: 'a', fields: [
       { key: 'initial', label: 'Inversión inicial', max: 200000, step: 500, suffix: '€' },
       { key: 'workYears', label: 'Años invirtiendo mientras cobras', min: 1, max: 50, step: 1, suffix: 'años' },
-      { key: 'inflation', label: 'Inflación media (España)', max: 10, step: 0.1, suffix: '%' },
+      { key: 'inflation', label: 'Inflación media', max: 10, step: 0.1, suffix: '%' },
     ]},
     { title: 'Vivir de las inversiones', col: 'a', fields: [
       { key: 'retireYears', label: 'Años de jubilación a cubrir', min: 5, max: 60, step: 1, suffix: 'años' },
@@ -71,7 +71,6 @@
   App.config = {
     STORAGE: { settings: 'fi.settings.v1', scenarios: 'fi.scenarios.v1', series: 'fi.series.v1' },
     DIV_TAX: 0.19, SERIES_TTL_MS: 24 * 3600 * 1000, FOREVER_SPEND: 2000, // € / mes que retira la estrategia "capital eterno"
-    TERS_URL: 'data/ters.json',
     PROXIES: [
       u => u,
       u => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u),

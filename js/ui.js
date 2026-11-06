@@ -54,10 +54,10 @@
       h('input', { type: 'checkbox', id: 'f-' + f.id, 'data-fcheck': f.id }),
       h('div', { class: 'fmain' }, h('b', {}, f.name),
         h('select', { 'data-fprov': f.id, 'aria-label': 'Gestor' }, ...f.providers.map(p => h('option', { value: p.id })))),
-      h('span', { class: 'ret' }),
+      h('div', { class: 'rcell' }, h('span', { class: 'ret' }), h('small', { class: 'ter' })),
       h('input', { type: 'number', min: 0, max: 100, step: 'any', 'data-fw': f.id }),
       h('span', { class: 'suf' }, '%'))));
-    box.append(h('div', { class: 'total', id: 'alloc-total' }));
+    box.append(h('div', { class: 'total', id: 'alloc-total' }), h('div', { class: 'total warn', id: 'hist-warn', hidden: '' }));
     box.addEventListener('input', e => {
       const c = e.target.dataset.fcheck, w = e.target.dataset.fw, p = e.target.dataset.fprov;
       if (c) {
@@ -127,9 +127,9 @@
     renderKpis(res);
     renderStrategies();
     renderScenarios();
-    const live = data.liveCount(), badge = $('#data-status');
-    badge.textContent = live ? `Datos en vivo (${live}/${config.FUNDS.length})` : 'Sin conexión · valores estimados (reintentar)';
-    badge.classList.toggle('live', live > 0);
+    const st = data.status(), badge = $('#data-status');
+    badge.textContent = st.mode === 'live' ? `En vivo (${st.count}/${config.FUNDS.length})` : st.mode === 'saved' ? `Datos del ${st.date || 'archivo local'}` : 'Sin datos · estimados (reintentar)';
+    badge.classList.toggle('live', st.mode !== 'none');
   }
 
   function renderFunds() {
@@ -142,11 +142,18 @@
       const w = $('[data-fw]', row); w.disabled = !on;
       if (document.activeElement !== w) w.value = on ? round(state.alloc[f.id]) : '';
       const ret = $('.ret', row); ret.textContent = pct(r.rate); ret.classList.toggle('neg', r.rate < 0);
-      ret.title = r.live ? `Rentabilidad anual real de los últimos ${Math.round(r.span)} años` : 'Estimada (sin datos en vivo)';
+      ret.title = r.live ? `Rentabilidad anual real de los últimos ${Math.round(r.span)} años` : 'Estimada (sin datos reales)';
+      $('.ter', row).textContent = 'TER ' + String(finance.providerOf(state, f).ter).replace('.', ',') + ' %';
     });
     const t = sumAlloc(), el = $('#alloc-total');
     el.textContent = `Reparto: ${round(t, 1)} %` + (Math.abs(t - 100) > 0.1 ? ' (se normaliza a 100 %)' : '');
     el.classList.toggle('warn', Math.abs(t - 100) > 0.1);
+    const warn = $('#hist-warn'), selected = Object.keys(state.alloc).map(id => config.FUNDS.find(x => x.id === id)).filter(Boolean);
+    const short = selected.filter(f => { const r = rateOf(f); return r.live && r.span < state.histYears - 0.5; });
+    warn.textContent = data.status().mode === 'none'
+      ? 'Sin datos reales: la rentabilidad es una estimación fija y no cambia con los años.'
+      : short.length ? `${short.map(f => f.name).join(', ')}: solo hay ${Math.round(Math.min(...short.map(f => rateOf(f).span)))} años de histórico; se usa el máximo disponible.` : '';
+    warn.hidden = !warn.textContent;
     $('#ter-info').textContent = data.terDate() ? `TER actualizados: ${data.terDate()}` : 'TER de referencia';
   }
 
@@ -172,9 +179,18 @@
   }
 
   function renderScenarios() {
-    $('#scenarios').replaceChildren(...scenarios.map(sc => h('li', {}, h('span', {}, sc.name),
-      h('button', { type: 'button', onclick: () => { Object.assign(state, structuredClone(sc.state)); refresh(); } }, 'Cargar'),
-      h('button', { type: 'button', class: 'del', onclick: () => { scenarios = scenarios.filter(x => x.id !== sc.id); storage.set(config.STORAGE.scenarios, scenarios); renderScenarios(); } }, '✕'))));
+    const save = () => storage.set(config.STORAGE.scenarios, scenarios);
+    const summary = sc => {
+      const s = sc.state, m = s.period === 'year' ? 12 : 1, u = s.period === 'year' ? '/año' : '/mes';
+      return `Neto ${eur.format(s.net * m)}${u} · invierte ${eur.format(s.invest * m)}${u} · inicial ${eur.format(s.initial)} · ${s.workYears} años · inflación ${s.inflation} % · histórico ${s.histYears} a. · bróker ${s.brokerFee} % · `
+        + Object.entries(s.alloc).map(([id, w]) => `${id} ${round(w, 1)} %`).join(', ');
+    };
+    $('#scenarios').replaceChildren(...scenarios.map(sc => h('li', {},
+      h('div', { class: 'sc-head' }, h('b', {}, sc.name),
+        h('button', { type: 'button', onclick: () => { Object.assign(state, structuredClone(sc.state)); refresh(); } }, 'Cargar'),
+        h('button', { type: 'button', title: 'Guarda aquí los datos actuales', onclick: () => { sc.state = structuredClone(state); save(); renderScenarios(); } }, 'Actualizar'),
+        h('button', { type: 'button', class: 'del', onclick: () => { scenarios = scenarios.filter(x => x.id !== sc.id); save(); renderScenarios(); } }, '✕')),
+      h('small', {}, summary(sc)))));
   }
 
   function init() {

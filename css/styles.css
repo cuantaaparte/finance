@@ -48,7 +48,9 @@ input[type=range]{accent-color:var(--accent)}
 .fund .fmain{display:flex;flex-direction:column;min-width:0;gap:.15rem}
 .fund b{font-size:.82rem}
 .fund select{width:100%;font-size:.72rem;padding:.15rem .25rem}
+.fund .rcell{display:flex;flex-direction:column;align-items:flex-end;line-height:1.15}
 .fund .ret{font-weight:600;color:var(--ok);font-size:.82rem}.fund .ret.neg{color:var(--bad)}
+.fund .ter{color:var(--muted);font-size:.68rem}
 .fund input[type=number]{width:56px}
 .tools{display:flex;justify-content:space-between;align-items:center;gap:.5rem;margin:.2rem 0 .3rem}
 .tools button,.save-form button,.scenarios button{background:var(--accent);color:#0b0f17;border:0;border-radius:7px;padding:.25rem .6rem;font:inherit;font-weight:600;cursor:pointer}
@@ -63,7 +65,9 @@ input[type=range]{accent-color:var(--accent)}
 .tags span{font-size:.68rem;background:#1b2536;border-radius:99px;padding:.1rem .45rem}
 .save-form{display:flex;gap:.4rem}
 .scenarios{list-style:none;padding:0;margin:.5rem 0 0;display:flex;flex-wrap:wrap;gap:.35rem}
-.scenarios li{display:flex;gap:.4rem;align-items:center;border:1px solid var(--line);border-radius:9px;padding:.2rem .45rem;font-size:.8rem}
+.scenarios li{display:flex;flex-direction:column;gap:.2rem;flex:1 1 260px;border:1px solid var(--line);border-radius:9px;padding:.3rem .5rem;font-size:.8rem}
+.scenarios small{color:var(--muted);font-size:.7rem}
+.sc-head{display:flex;gap:.35rem;align-items:center}.sc-head b{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
 .scenarios .del{background:transparent;color:var(--bad);border:1px solid var(--line)}
 
 /* ---- PC: todo visible a la vez, sin scroll de página ---- */
