@@ -1,0 +1,83 @@
+/* Configuración: catálogo de fondos (con varios gestores y su TER), valores por defecto y esquema del formulario. */
+(function (App) {
+  'use strict';
+  const P = (id, name, ter) => ({ id, name, ter });
+  // id = ticker de Yahoo Finance usado como PROXY del índice. vol = volatilidad anual (%), yield = dividendo bruto (%),
+  // fallback = rentabilidad anual si no hay conexión. Los TER son ORIENTATIVOS: se sobrescriben con data/ters.json.
+  const FUNDS = [
+    { id: 'VT', name: 'Global All-World (FTSE)', vol: 15, yield: 1.9, fallback: 0.080, providers: [
+      P('vt-vanguard', 'Vanguard FTSE All-World', 0.19), P('vt-invesco', 'Invesco FTSE All-World', 0.15)] },
+    { id: 'ACWI', name: 'Global All-World (MSCI ACWI)', vol: 15, yield: 1.8, fallback: 0.080, providers: [
+      P('acwi-ishares', 'iShares MSCI ACWI', 0.20), P('acwi-spdr', 'SPDR MSCI ACWI', 0.12)] },
+    { id: 'URTH', name: 'MSCI World', vol: 14, yield: 1.8, fallback: 0.085, providers: [
+      P('urth-ishares', 'iShares Core MSCI World', 0.20), P('urth-amundi', 'Amundi MSCI World', 0.12),
+      P('urth-fidelity', 'Fidelity Index World', 0.12), P('urth-xtrackers', 'Xtrackers MSCI World', 0.19)] },
+    { id: 'SPY', name: 'S&P 500 (EE. UU.)', vol: 16, yield: 1.3, fallback: 0.100, providers: [
+      P('spy-vanguard', 'Vanguard S&P 500', 0.07), P('spy-ishares', 'iShares Core S&P 500', 0.07),
+      P('spy-spdr', 'SPDR S&P 500', 0.03), P('spy-amundi', 'Amundi S&P 500', 0.15)] },
+    { id: 'QQQ', name: 'Nasdaq 100', vol: 21, yield: 0.6, fallback: 0.140, providers: [
+      P('qqq-invesco', 'Invesco EQQQ Nasdaq-100', 0.30), P('qqq-ishares', 'iShares Nasdaq 100', 0.33),
+      P('qqq-amundi', 'Amundi Nasdaq-100', 0.23), P('qqq-xtrackers', 'Xtrackers Nasdaq 100', 0.20)] },
+    { id: 'VGK', name: 'Europa', vol: 17, yield: 3.0, fallback: 0.060, providers: [
+      P('vgk-vanguard', 'Vanguard FTSE Developed Europe', 0.10), P('vgk-ishares', 'iShares Core MSCI Europe', 0.12),
+      P('vgk-amundi', 'Amundi Stoxx Europe 600', 0.07)] },
+    { id: 'EWJ', name: 'Japón', vol: 17, yield: 2.0, fallback: 0.050, providers: [
+      P('ewj-ishares', 'iShares Core MSCI Japan IMI', 0.15), P('ewj-amundi', 'Amundi MSCI Japan', 0.12)] },
+    { id: 'VWO', name: 'Emergentes (FTSE)', vol: 19, yield: 2.8, fallback: 0.040, providers: [
+      P('vwo-vanguard', 'Vanguard FTSE Emerging Markets', 0.22)] },
+    { id: 'EEM', name: 'Emergentes (MSCI EM)', vol: 19, yield: 2.7, fallback: 0.040, providers: [
+      P('eem-ishares', 'iShares Core MSCI EM IMI', 0.18), P('eem-amundi', 'Amundi MSCI Emerging Markets', 0.14),
+      P('eem-fidelity', 'Fidelity Index Emerging Markets', 0.20), P('eem-xtrackers', 'Xtrackers MSCI Emerging Markets', 0.18)] },
+    { id: 'AGG', name: 'Bonos agregados (RF)', vol: 5, yield: 3.2, fallback: 0.020, providers: [
+      P('agg-vanguard', 'Vanguard Global Aggregate Bond', 0.10), P('agg-ishares', 'iShares Global Aggregate Bond', 0.10)] },
+  ];
+
+  const DEFAULT_STATE = {
+    period: 'month',
+    net: 1800, needs: 900, leisure: 270, invest: 630,   // importes SIEMPRE guardados en € / mes
+    investAuto: true, touched: { needs: false, leisure: false },
+    initial: 1000, workYears: 20, retireYears: 30, inflation: 2.5,
+    histYears: 10, brokerFee: 0.15, alloc: { VT: 100 }, prov: {},
+    retLinked: true, retNeeds: 900, retLeisure: 270,
+    showInvested: true, showPrice: true, showTotal: true,
+  };
+
+  // Esquema declarativo: añadir un campo = añadir una línea. col = columna de escritorio ('a' | 'b').
+  const SECTIONS = [
+    { title: 'Ingresos y gastos', col: 'a', fields: [
+      { key: 'net', label: 'Sueldo neto', max: 8000, step: 50, unit: true },
+      { key: 'needs', label: 'Necesidades básicas', max: 8000, step: 25, unit: true, pct: 'needsPct' },
+      { key: 'leisure', label: 'Ocio', max: 4000, step: 25, unit: true, pct: 'leisurePct' },
+      { key: 'investAuto', label: 'Invertir todo lo que sobra', type: 'check' },
+      { key: 'invest', label: 'Inversión', max: 8000, step: 25, unit: true, pct: 'investPct' },
+    ]},
+    { title: 'Plan de inversión', col: 'a', fields: [
+      { key: 'initial', label: 'Inversión inicial', max: 200000, step: 500, suffix: '€' },
+      { key: 'workYears', label: 'Años invirtiendo mientras cobras', min: 1, max: 50, step: 1, suffix: 'años' },
+      { key: 'inflation', label: 'Inflación media (España)', max: 10, step: 0.1, suffix: '%' },
+    ]},
+    { title: 'Vivir de las inversiones', col: 'a', fields: [
+      { key: 'retireYears', label: 'Años de jubilación a cubrir', min: 5, max: 60, step: 1, suffix: 'años' },
+      { key: 'retLinked', label: 'Mismos gastos que ahora', type: 'check' },
+      { key: 'retNeeds', label: 'Necesidades básicas', max: 8000, step: 25, unit: true, linked: true },
+      { key: 'retLeisure', label: 'Ocio', max: 4000, step: 25, unit: true, linked: true },
+    ]},
+    { title: 'Fondos y comisiones', col: 'b', custom: 'funds', fields: [
+      { key: 'histYears', label: 'Años de histórico para la rentabilidad', min: 1, max: 30, step: 1, suffix: 'años' },
+      { key: 'brokerFee', label: 'Comisión anual del bróker', max: 1.5, step: 0.01, suffix: '%' },
+    ]},
+  ];
+
+  App.config = {
+    STORAGE: { settings: 'fi.settings.v1', scenarios: 'fi.scenarios.v1', series: 'fi.series.v1' },
+    DIV_TAX: 0.19, SERIES_TTL_MS: 24 * 3600 * 1000, FOREVER_SPEND: 2000, // € / mes que retira la estrategia "capital eterno"
+    TERS_URL: 'data/ters.json',
+    PROXIES: [
+      u => u,
+      u => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u),
+      u => 'https://corsproxy.io/?' + encodeURIComponent(u),
+      u => 'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(u),
+    ],
+    FUNDS, DEFAULT_STATE, SECTIONS,
+  };
+})(window.App = window.App || {});

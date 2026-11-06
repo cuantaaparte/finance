@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Simulador de fondos indexados</title>
+  <link rel="stylesheet" href="css/styles.css">
+  <!-- Scripts clásicos (no módulos) para que funcione con doble clic (file://). El orden importa. -->
+  <script defer src="js/config.js"></script>
+  <script defer src="js/storage.js"></script>
+  <script defer src="js/dataService.js"></script>
+  <script defer src="js/finance.js"></script>
+  <script defer src="js/chart.js"></script>
+  <script defer src="js/ui.js"></script>
+  <script defer src="js/main.js"></script>
+</head>
+<body>
+  <header class="top">
+    <h1>📈 Simulador de fondos indexados</h1>
+    <div class="top-right">
+      <button id="data-status" class="badge" type="button" title="Pulsa para reintentar la conexión">Cargando datos…</button>
+      <label class="switch" title="Cambia todos los importes entre mensual y anual">
+        <span>Mensual</span><input type="checkbox" data-key="periodYearly"><i></i><span>Anual</span>
+      </label>
+    </div>
+  </header>
+
+  <main class="layout">
+    <!-- Zona de gráfica: en móvil se queda fija arriba mientras haces scroll -->
+    <section id="zone" class="zone">
+      <div id="kpis" class="kpis"></div>
+      <div class="card chart-card">
+        <div class="legend">
+          <label><input type="checkbox" data-key="showInvested"><b style="--c:#94a3b8"></b>Invertido</label>
+          <label><input type="checkbox" data-key="showPrice"><b style="--c:#38bdf8"></b>Con rentabilidad</label>
+          <label><input type="checkbox" data-key="showTotal"><b style="--c:#a78bfa"></b>+ dividendos</label>
+          <span class="hint">€ de hoy · <b class="dot ok"></b>sostenible <b class="dot bad"></b>consumes capital</span>
+        </div>
+        <div class="chart-wrap">
+          <canvas id="chart"></canvas>
+          <div id="tip" class="tip" hidden></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="strat-card" class="card"><h2>Estrategias sugeridas</h2><div id="strategies" class="strategies"></div></section>
+    <aside id="col-a" class="col"></aside>
+    <aside id="col-b" class="col"></aside>
+
+    <section id="scen-card" class="card">
+      <h2>Mis supuestos</h2>
+      <form id="save-form" class="save-form">
+        <input id="scenario-name" type="text" placeholder="Nombre del supuesto" maxlength="40">
+        <button type="submit">Guardar</button>
+      </form>
+      <ul id="scenarios" class="scenarios"></ul>
+    </section>
+  </main>
+</body>
+</html>
