@@ -168,7 +168,7 @@
     el.className = 'total' + (r.color ? ' risk-' + r.color : '');
     el.title = `Nota de riesgo ${r.score}/100: hasta 50 es la probabilidad de quedarte sin dinero antes de acabar la jubilación (300 simulaciones); por encima, cuánto antes se agota\n`
       + `Probabilidad de quedarte sin dinero: ${Math.round(r.prob * 100)} %\n`
-      + `Fondos: volatilidad ${pc(r.vol)}` + (r.maxDD != null ? `, caída máxima ${pc(r.maxDD)} (histórico real)` : ' (estimada, sin histórico)') + '\n'
+      + `Fondos: volatilidad ${pc(r.vol)}` + (r.maxDD != null ? `, caída máxima ${pc(r.maxDD)} (histórico real de ${r.histYears.toFixed(1).replace('.', ',')} años)` : ' (estimada, sin histórico)') + '\n'
       + (r.divRatio != null ? `Diversificación: ${r.divRatio.toFixed(2).replace('.', ',')} (1 = ninguna; más alto = mejor)\n` : '')
       + (r.inflSd != null ? `Inflación: varía ±${(r.inflSd * 100).toFixed(1).replace('.', ',')} pts al año (últimos ${r.inflYears} años)\n` : 'Inflación: sin datos históricos, se supone constante\n')
       + `Rentabilidad esperada usada: ${pc(r.exp)}` + (r.capped ? ' (limitada a la del mercado global)' : '');
@@ -232,6 +232,8 @@
     new ResizeObserver(syncHead).observe(head); syncHead();
     chart.init($('#chart'), $('#tip'));
     document.addEventListener('input', e => { const el = e.target.closest('[data-key]'); if (el) set(el.dataset.key, el); });
+    // Si dejas un número vacío y sales del campo, se restaura el valor real (el estado no cambia mientras está vacío).
+    document.addEventListener('focusout', e => { if (e.target.matches?.('input[type=number]') && e.target.value.trim() === '') refresh(false); });
     $('#data-status').addEventListener('click', async () => { $('#data-status').textContent = 'Conectando…'; await data.loadAll(true); refresh(false); });
     $('#save-form').addEventListener('submit', e => {
       e.preventDefault();

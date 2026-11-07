@@ -7,9 +7,25 @@
   const series = {}, liveIds = new Set();
   let snapDate = null, terDate = null;
 
+  const monthKey = t => { const d = new Date(t * 1000); return d.getUTCFullYear() * 12 + d.getUTCMonth(); };
+
+  /** Yahoo añade al final un punto "de hoy" dentro del mes en curso (mismo mes y mismo precio que el anterior).
+   *  Si se dejara, ese mes contaría como un mes con rentabilidad 0 %. Se conserva solo el ÚLTIMO punto de cada mes. */
+  function oneForMonth(pts) {
+    const out = [];
+    for (const p of pts) {
+      if (out.length && monthKey(out[out.length - 1][0]) === monthKey(p[0])) out[out.length - 1] = p;
+      else out.push(p);
+    }
+    return out;
+  }
+
   function applyLocalFiles() {
     const snap = App.snapshot;
-    if (snap?.series && Object.keys(snap.series).length) { Object.assign(series, snap.series); snapDate = snap.updated; }
+    if (snap?.series && Object.keys(snap.series).length) {
+      for (const id in snap.series) series[id] = oneForMonth(snap.series[id]);
+      snapDate = snap.updated;
+    }
     const t = App.tersData;
     if (t?.ters) {
       config.FUNDS.forEach(f => f.providers.forEach(p => { if (typeof t.ters[p.id] === 'number') p.ter = t.ters[p.id]; }));
@@ -31,7 +47,7 @@
     const r = json.chart.result[0], closes = r.indicators.quote[0].close; // precio sin dividendos (éstos se añaden aparte)
     const pts = r.timestamp.map((t, i) => [t, closes[i]]).filter(p => p[1] > 0);
     if (pts.length < 13) throw new Error('histórico corto');
-    return pts;
+    return oneForMonth(pts);
   }
 
   // Varios proxies a la vez; gana el primero que responda bien.
@@ -44,7 +60,7 @@
     const stale = !snapDate || Date.now() - Date.parse(snapDate) > STALE_MS; // archivo local con más de 14 días: se intenta internet
     if (!force && !stale && series[fund.id]) return;
     const hit = storage.get(config.STORAGE.series, {})[fund.id];
-    if (!force && hit && Date.now() - hit.at < config.SERIES_TTL_MS) { series[fund.id] = hit.pts; liveIds.add(fund.id); return; }
+    if (!force && hit && Date.now() - hit.at < config.SERIES_TTL_MS) { series[fund.id] = oneForMonth(hit.pts); liveIds.add(fund.id); return; }
     try {
       const pts = await download(fund);
       series[fund.id] = pts; liveIds.add(fund.id);
@@ -54,7 +70,6 @@
     } catch { /* se queda lo que hubiera (archivo local o estimación) */ }
   }
 
-  const monthKey = t => { const d = new Date(t * 1000); return d.getUTCFullYear() * 12 + d.getUTCMonth(); };
   function monthlyReturns(id, years) {
     const s = series[id];
     if (!s || s.length < 13) return null;
@@ -73,12 +88,15 @@
   /** Datos REALES de la cartera: rentabilidades mensuales (en los meses comunes a todos sus fondos), volatilidad con
    *  correlaciones, caída máxima y ratio de diversificación (media ponderada de volatilidades ÷ volatilidad de la cartera). */
   function portfolioStats(alloc, years) {
-    const ids = Object.keys(alloc), total = ids.reduce((a, id) => a + alloc[id], 0) || 1;
+    let ids = Object.keys(alloc);
+    const used = ids.filter(id => alloc[id] > 0);
+    if (used.length) ids = used; // un fondo al 0 % no pesa ni debe recortar el histórico común de los demás
+    const total = ids.reduce((a, id) => a + alloc[id], 0);
     const maps = ids.map(id => monthlyReturns(id, years));
     if (!maps.length || maps.some(m => !m)) return null;
     const keys = [...maps[0].keys()].filter(k => maps.every(m => m.has(k))).sort((a, b) => a - b);
     if (keys.length < 12) return null;
-    const w = ids.map(id => alloc[id] / total);
+    const w = ids.map(id => (total > 0 ? alloc[id] / total : 1 / ids.length)); // todo a 0 %: reparto a partes iguales (igual que portfolio())
     const returns = keys.map(k => maps.reduce((a, m, i) => a + m.get(k) * w[i], 0));
     const st = statsOf(returns);
     const indiv = maps.map(m => sdOf(keys.map(k => m.get(k))) * Math.sqrt(12));

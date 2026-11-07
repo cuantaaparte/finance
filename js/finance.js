@@ -73,7 +73,6 @@
     return null;
   }
 
-  // Niveles según la probabilidad (%) de quedarte sin dinero antes de acabar la jubilación
   // Niveles según la nota: 50 × probabilidad de quedarte sin dinero + hasta otros 50 según lo pronto que se agota
   const LEVELS = [[5, 'Muy bajo', 'green'], [12, 'Bajo', 'green'], [25, 'Medio', ''], [40, 'Alto', 'orange'], [101, 'Muy alto', 'red']];
 
@@ -119,7 +118,7 @@
     const score = Math.round(mc.score);
     const [, level, color] = LEVELS.find(l => score < l[0]);
     return { score, level, color, prob: mc.prob, exp, capped: p.total > world, vol: market ? market.vol : volEst,
-             maxDD: market ? market.maxDD : null, divRatio: market ? market.divRatio : null,
+             maxDD: market ? market.maxDD : null, divRatio: market ? market.divRatio : null, histYears: market ? market.years : null,
              inflSd: infl ? infl.sd : null, inflYears: infl ? infl.years : null };
   }
 
@@ -145,7 +144,7 @@
         } },
       { id: 'grow', title: '🚀 Ahorrar más', desc: 'Recortas un 25 % el ocio y ahorros, lo inviertes todo, 100 % renta variable global y el gestor más barato.',
         patch(ns) { useFunds(ns, A.growth); ns.leisure *= 0.75; ns.touched.leisure = true; ns.investAuto = true; ns.retLinked = true; } },
-      { id: 'safe', title: '🛡️ Prudente 60/40', desc: '60 % renta variable global y 40 % bonos (gestores más baratos): menos subidas, menos sustos.',
+      { id: 'safe', title: '🛡️ Prudente 60/40', desc: '60 % renta variable global y 40 % bonos (gestores más baratos): caídas más suaves, pero rinde menos y puede pedirte más años de trabajo o gastar menos.',
         patch(ns) { useFunds(ns, A.safe); ns.investAuto = true; ns.retLinked = true; } },
     ];
     return defs.map(d => {
