@@ -76,7 +76,25 @@
       u => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u),
       u => 'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(u),
     ],
-    AVERAGE_PROFILE: { net: 1800, initial: 1000, workYears: 20 }, // salario neto medio orientativo (€/mes); cámbialo a tu país
+    AVERAGE_PROFILE: { net: 1800, initial: 1000, workYears: 20, retireYears: 30 }, // salario neto medio orientativo (€/mes); cámbialo a tu país
+    INFLATION_COUNTRY: 'ESP', // código ISO3 del país cuya inflación histórica descarga tools/update-data.mjs (Banco Mundial)
+    // Reparto que fijan las estrategias (se eligen siempre los gestores más baratos de cada fondo)
+    STRATEGY_ALLOC: { growth: { VT: 100 }, safe: { VT: 60, AGG: 40 } },
+    // Umbrales orientativos para marcar valores extremos en los campos: 'bad' = pesimista (rojo), 'good' = demasiado optimista (verde).
+    // pctOfNet: el valor se compara como % del sueldo neto. gt = mayor que, lt = menor que.
+    EXTREMES: {
+      net: { bad: { lt: 900 }, good: { gt: 5000 } },
+      needs: { pctOfNet: true, bad: { gt: 85 }, good: { lt: 5 } },
+      leisure: { pctOfNet: true, bad: { gt: 50 }, good: { lt: 5 } },
+      invest: { pctOfNet: true, good: { gt: 60 } },
+      initial: { good: { gt: 50000 } },
+      workYears: { bad: { gt: 45 }, good: { lt: 5 } },
+      inflation: { bad: { gt: 6 }, good: { lt: 1 } },
+      brokerFee: { bad: { gt: 1 } },
+      retireYears: { bad: { gt: 50 }, good: { lt: 10 } },
+      retNeeds: { pctOfNet: true, bad: { gt: 85 }, good: { lt: 5 } },
+      retLeisure: { pctOfNet: true, bad: { gt: 50 }, good: { lt: 5 } },
+    },
     FUNDS, DEFAULT_STATE, SECTIONS,
   };
 })(window.App = window.App || {});

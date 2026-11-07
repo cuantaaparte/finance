@@ -19,8 +19,8 @@
   let raf = 0;
   const factor = () => (state.period === 'year' ? 12 : 1);
   const rateOf = f => data.cagr(f, state.histYears);
-  // Riesgo real: se usa todo el histórico disponible (mín. 20 años) para que una ventana corta no oculte las grandes caídas
-  const statsOf = s => data.portfolioStats(s.alloc, Math.max(s.histYears, 20));
+  // Datos del riesgo: todo el histórico disponible (mín. 20 años, para que una ventana corta no oculte las grandes caídas) e inflación de los últimos 30 años
+  const inputsOf = s => ({ market: data.portfolioStats(s.alloc, Math.max(s.histYears, 20)), infl: data.inflationStats(30) });
   const sumAlloc = () => Object.values(state.alloc).reduce((a, b) => a + b, 0);
 
   function h(tag, attrs = {}, ...kids) {
@@ -45,7 +45,7 @@
       h('input', { type: 'number', 'data-key': f.key, step: 'any', min: f.min ?? 0, inputmode: 'decimal', ...link }),
       h('span', { class: 'suf' }, isMoney ? '€' : f.suffix || ''));
     if (f.pct) row.append(h('input', { type: 'number', class: 'pct', 'data-key': f.pct, min: 0, max: 100, step: 'any', inputmode: 'decimal' }), h('span', { class: 'suf' }, '%'));
-    return h('div', { class: 'field' }, h('label', {}, f.label, f.unit ? h('em', { 'data-unit': '' }) : null), row);
+    return h('div', { class: 'field', 'data-field': f.key }, h('label', {}, f.label, f.unit ? h('em', { 'data-unit': '' }) : null), row);
   }
 
   function buildFunds() {
@@ -124,6 +124,7 @@
     });
     $$('[data-unit]').forEach(e => (e.textContent = state.period === 'year' ? '(€ / año)' : '(€ / mes)'));
     renderFunds();
+    renderExtremes();
 
     const port = finance.portfolio(state, rateOf), res = finance.simulate(state, port);
     chart.render(res, state);
@@ -162,13 +163,27 @@
   }
 
   function renderRisk(port, res) {
-    const r = finance.risk(state, port, res, statsOf), el = $('#risk-total'), pc = x => Math.round(x * 100) + ' %';
+    const r = finance.risk(state, port, res, rateOf, inputsOf(state)), el = $('#risk-total'), pc = x => (x * 100).toFixed(1).replace('.', ',') + ' %';
     el.textContent = `Riesgo: ${r.level} (${r.score}/100)`;
     el.className = 'total' + (r.color ? ' risk-' + r.color : '');
-    el.title = `Mercado ${r.parts.market}/100 · volatilidad ${pc(r.vol)}, caída máxima ${pc(r.maxDD)}${r.live ? '' : ' (estimadas, sin histórico)'}\n`
-      + `Retirada ${r.parts.sustain}/100 · retiras ${Number.isFinite(res.withdrawalRate) ? pc(res.withdrawalRate) : '—'} del capital al año\n`
-      + `Inflación ${r.parts.inflation}/100 · prueba con +2 puntos de inflación\n`
-      + `Horizonte y esfuerzo ${r.parts.horizon}/100 · ${state.workYears} años invirtiendo`;
+    el.title = `Nota de riesgo ${r.score}/100: hasta 50 es la probabilidad de quedarte sin dinero antes de acabar la jubilación (300 simulaciones); por encima, cuánto antes se agota\n`
+      + `Probabilidad de quedarte sin dinero: ${Math.round(r.prob * 100)} %\n`
+      + `Fondos: volatilidad ${pc(r.vol)}` + (r.maxDD != null ? `, caída máxima ${pc(r.maxDD)} (histórico real)` : ' (estimada, sin histórico)') + '\n'
+      + (r.divRatio != null ? `Diversificación: ${r.divRatio.toFixed(2).replace('.', ',')} (1 = ninguna; más alto = mejor)\n` : '')
+      + (r.inflSd != null ? `Inflación: varía ±${(r.inflSd * 100).toFixed(1).replace('.', ',')} pts al año (últimos ${r.inflYears} años)\n` : 'Inflación: sin datos históricos, se supone constante\n')
+      + `Rentabilidad esperada usada: ${pc(r.exp)}` + (r.capped ? ' (limitada a la del mercado global)' : '');
+  }
+
+  /** Marca en rojo (pesimista) o verde (demasiado optimista) los campos con valores extremos. */
+  function renderExtremes() {
+    const out = (r, v) => r && ((r.gt != null && v > r.gt) || (r.lt != null && v < r.lt));
+    $$('.field[data-field]').forEach(el => {
+      const key = el.dataset.field, rule = config.EXTREMES[key];
+      const v = rule?.pctOfNet ? (state.net > 0 ? (state[key] / state.net) * 100 : NaN) : state[key];
+      const hit = !rule || !Number.isFinite(v) ? null : out(rule.bad, v) ? 'bad' : out(rule.good, v) ? 'good' : null;
+      el.classList.toggle('is-bad', hit === 'bad'); el.classList.toggle('is-good', hit === 'good');
+      el.title = hit === 'bad' ? 'Valor extremo: muy pesimista' : hit === 'good' ? 'Valor extremo: demasiado optimista' : '';
+    });
   }
 
   function renderKpis(res) {
@@ -185,13 +200,13 @@
   function renderStrategies() {
     $$('#strat-base button').forEach(b => b.classList.toggle('on', b.dataset.sb === state.stratBase));
     const start = base || state, source = state.stratBase === 'avg' ? finance.averageProfile(start) : start;
-    $('#strategies').replaceChildren(...finance.strategies(source, rateOf, statsOf).map(st =>
+    $('#strategies').replaceChildren(...finance.strategies(source, rateOf, inputsOf).map(st =>
       h('button', { type: 'button', class: 'strategy' + (st.id === active ? ' active' : ''), disabled: st.unavailable ? '' : null,
         onclick: () => { Object.assign(state, structuredClone(st.state)); active = st.id; refresh(false); } },
         h('b', {}, st.title), h('p', {}, st.unavailable ? 'No es alcanzable con tus datos actuales.' : st.desc),
         st.unavailable ? null : h('div', { class: 'tags' },
           h('span', {}, `Trabajas ${st.state.workYears} años`), h('span', {}, `Capital ${eur.format(st.res.capital)}`),
-          h('span', {}, `Retiras ${eur.format(st.res.spend)}/mes`), h('span', { class: st.risk.color ? 'risk-' + st.risk.color : '' }, `Riesgo ${st.risk.level} (${st.risk.score})`)))));
+          h('span', {}, `Retiras ${eur.format(st.res.spend)}/mes`), h('span', { class: st.risk.color ? 'risk-' + st.risk.color : '' }, `Riesgo ${st.risk.level} (${st.risk.score}/100)`)))));
   }
 
   function renderScenarios() {

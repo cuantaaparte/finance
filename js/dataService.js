@@ -63,19 +63,34 @@
     return out.size >= 12 ? out : null;
   }
 
-  /** Volatilidad anual y caída máxima REALES de la cartera (con correlaciones), o null si falta histórico de algún fondo. */
+  const sdOf = a => { const m = a.reduce((x, y) => x + y, 0) / a.length; return Math.sqrt(a.reduce((x, y) => x + (y - m) ** 2, 0) / (a.length - 1)); };
+  function statsOf(values) {
+    let v = 1, peak = 1, maxDD = 0;
+    values.forEach(x => { v *= 1 + x; peak = Math.max(peak, v); maxDD = Math.max(maxDD, 1 - v / peak); });
+    return { vol: sdOf(values) * Math.sqrt(12), maxDD };
+  }
+
+  /** Datos REALES de la cartera: rentabilidades mensuales (en los meses comunes a todos sus fondos), volatilidad con
+   *  correlaciones, caída máxima y ratio de diversificación (media ponderada de volatilidades ÷ volatilidad de la cartera). */
   function portfolioStats(alloc, years) {
     const ids = Object.keys(alloc), total = ids.reduce((a, id) => a + alloc[id], 0) || 1;
     const maps = ids.map(id => monthlyReturns(id, years));
     if (!maps.length || maps.some(m => !m)) return null;
     const keys = [...maps[0].keys()].filter(k => maps.every(m => m.has(k))).sort((a, b) => a - b);
     if (keys.length < 12) return null;
-    const r = keys.map(k => maps.reduce((a, m, i) => a + m.get(k) * alloc[ids[i]] / total, 0));
-    const mean = r.reduce((a, x) => a + x, 0) / r.length;
-    const vol = Math.sqrt(r.reduce((a, x) => a + (x - mean) ** 2, 0) / (r.length - 1)) * Math.sqrt(12);
-    let v = 1, peak = 1, maxDD = 0;
-    r.forEach(x => { v *= 1 + x; peak = Math.max(peak, v); maxDD = Math.max(maxDD, 1 - v / peak); });
-    return { vol, maxDD, months: r.length };
+    const w = ids.map(id => alloc[id] / total);
+    const returns = keys.map(k => maps.reduce((a, m, i) => a + m.get(k) * w[i], 0));
+    const st = statsOf(returns);
+    const indiv = maps.map(m => sdOf(keys.map(k => m.get(k))) * Math.sqrt(12));
+    return { ...st, returns, divRatio: indiv.reduce((a, v, i) => a + v * w[i], 0) / st.vol, months: keys.length, years: keys.length / 12 };
+  }
+
+  /** Inflación histórica real (data/market-data.js, Banco Mundial): media y desviación típica anual, en tanto por uno. */
+  function inflationStats(years = 30) {
+    const rows = App.snapshot?.inflation?.series;
+    if (!rows || rows.length < 8) return null;
+    const v = rows.slice(-years).map(r => r[1] / 100);
+    return { mean: v.reduce((a, x) => a + x, 0) / v.length, sd: sdOf(v), years: v.length };
   }
 
   applyLocalFiles();
@@ -88,7 +103,7 @@
       return { mode, count: liveIds.size, date: snapDate ? new Date(snapDate).toLocaleDateString('es-ES') : null };
     },
     terDate: () => terDate,
-    portfolioStats,
+    portfolioStats, inflationStats,
     /** Rentabilidad anual compuesta de los últimos `years` años (o estimación fija si no hay datos). */
     cagr(fund, years) {
       const s = series[fund.id];

@@ -23,7 +23,7 @@
   /** Punto de partida estándar (salario medio) para las estrategias; conserva fondos, inflación y comisiones del usuario. */
   function averageProfile(s) {
     const a = config.AVERAGE_PROFILE, n = structuredClone(s);
-    Object.assign(n, { net: a.net, initial: a.initial, workYears: a.workYears, investAuto: true, retLinked: true, touched: { needs: false, leisure: false } });
+    Object.assign(n, { net: a.net, initial: a.initial, workYears: a.workYears, retireYears: a.retireYears, investAuto: true, retLinked: true, touched: { needs: false, leisure: false } });
     return normalize(n);
   }
 
@@ -41,7 +41,7 @@
     return { price, total: price + div, vol };
   }
 
-  function simulate(s, p) {
+  function simulate(s, p, opts = {}) { // opts.crash: caída (0-1) del capital justo al jubilarte
     const infl = s.inflation / 100;
     const m = r => Math.pow((1 + r) / (1 + infl), 1 / 12) - 1; // tasa mensual real
     const mP = m(p.price), mT = m(p.total);
@@ -51,6 +51,7 @@
     let depleted = null;
     for (let y = 0; y < years; y++) {
       let i = invested[y], pr = price[y], t = total[y];
+      if (opts.crash && y === s.workYears) t *= 1 - opts.crash;
       const start = t, working = y < s.workYears;
       for (let k = 0; k < 12; k++) {
         if (working) { pr = pr * (1 + mP) + s.invest; t = t * (1 + mT) + s.invest; i += s.invest; }
@@ -72,57 +73,87 @@
     return null;
   }
 
-  const LEVELS = [[20, 'Muy bajo', 'green'], [38, 'Bajo', 'green'], [58, 'Medio', ''], [75, 'Alto', 'orange'], [101, 'Muy alto', 'red']];
+  // Niveles según la probabilidad (%) de quedarte sin dinero antes de acabar la jubilación
+  // Niveles según la nota: 50 × probabilidad de quedarte sin dinero + hasta otros 50 según lo pronto que se agota
+  const LEVELS = [[5, 'Muy bajo', 'green'], [12, 'Bajo', 'green'], [25, 'Medio', ''], [40, 'Alto', 'orange'], [101, 'Muy alto', 'red']];
 
-  /** Riesgo global del plan (0-100) a partir de 4 bloques: mercado, retirada, inflación y horizonte/esfuerzo. */
-  function risk(s, p, res, statsOf) {
-    const scale = (x, a, b) => clamp((x - a) / (b - a), 0, 1) * 100;
-    const st = statsOf ? statsOf(s) : null;
-    const vol = st ? st.vol : p.vol / 100, dd = st ? st.maxDD : vol * 3; // sin histórico: caída máx. ≈ 3× la volatilidad
-    // 1) Mercado: cuánto se mueven y cuánto han llegado a caer los fondos elegidos
-    const market = 0.5 * scale(vol, 0.04, 0.22) + 0.5 * scale(dd, 0.05, 0.5);
-    // 2) Retirada: tasa de retirada al jubilarte (4 % ≈ referencia) y duración de la jubilación; 100 si el dinero se acaba
-    const sustain = res.depleted !== null ? 100 : 0.8 * scale(res.withdrawalRate, 0.025, 0.06) + 0.2 * scale(s.retireYears, 25, 50);
-    // 3) Inflación: ¿aguantaría el plan si fuera 2 puntos mayor de lo supuesto? (tasa de retirada resultante) y lo alta que ya es la supuesta
-    const stress = simulate({ ...s, inflation: s.inflation + 2 }, p);
-    const wrS = stress.capital > 0 ? stress.spend * 12 / stress.capital : Infinity;
-    const shock = res.depleted !== null ? 100 : stress.depleted !== null ? 90 : scale(wrS, 0.03, 0.07);
-    const inflation = 0.6 * shock + 0.4 * scale(s.inflation, 2, 8);
-    // 4) Horizonte y esfuerzo: pocos años invirtiendo dejan poco margen; ahorrar casi nada o más del 30 % del sueldo es frágil
-    const save = s.net > 0 ? s.invest / s.net : 0;
-    const horizon = 0.6 * scale(s.workYears, 25, 8) + 0.4 * (save < 0.05 ? 80 : scale(save, 0.3, 0.6));
-    const score = Math.round(0.35 * market + 0.30 * sustain + 0.15 * inflation + 0.20 * horizon);
-    const [, level, color] = LEVELS.find(l => score < l[0]);
-    return { score, level, color, live: !!st, vol, maxDD: dd,
-             parts: { market: Math.round(market), sustain: Math.round(sustain), inflation: Math.round(inflation), horizon: Math.round(horizon) } };
+  const rng = a => () => { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  const gauss = r => { let u = 0; while (!u) u = r(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * r()); };
+
+  /**
+   * Monte Carlo (semilla fija → resultado estable). Cada simulación remuestrea por bloques de 12 meses la historia REAL
+   * de la cartera (conserva rachas y caídas), recentrada en la rentabilidad esperada, y sortea la inflación de cada año
+   * con su variación histórica real. Devuelve la probabilidad de agotar el dinero y lo pronto que ocurre.
+   */
+  function monteCarlo(s, exp, market, infl, volEst, runs = 300) {
+    const rand = rng(20261107), hist = market?.returns, L = hist?.length || 0, B = Math.min(12, L);
+    const mean = L ? hist.reduce((a, x) => a + x, 0) / L : 0, target = Math.pow(1 + exp, 1 / 12) - 1;
+    const workM = s.workYears * 12, totalM = workM + s.retireYears * 12, spend = s.retNeeds + s.retLeisure;
+    let fails = 0, early = 0;
+    for (let k = 0; k < runs; k++) {
+      let w = s.initial, idx = 0, left = 0, inf = 1;
+      for (let m = 0; m < totalM; m++) {
+        if (m % 12 === 0) inf = Math.pow(1 + Math.max(-0.02, s.inflation / 100 + (infl ? infl.sd * gauss(rand) : 0)), 1 / 12);
+        let r;
+        if (L) { if (left === 0) { idx = Math.floor(rand() * (L - B + 1)); left = B; } r = hist[idx++] - mean + target; left--; }
+        else r = target + (volEst / Math.sqrt(12)) * gauss(rand);
+        const g = Math.max(-0.99, (1 + r) / inf - 1);
+        if (m < workM) w = w * (1 + g) + s.invest;
+        else { w = w * (1 + g) - spend; if (w <= 0) { fails++; early += 1 - (m - workM) / (totalM - workM); break; } }
+      }
+    }
+    const prob = fails / runs;
+    return { prob, score: 50 * prob + 50 * prob * (fails ? early / fails : 0) };
   }
 
-  /** Estrategias calculadas SIEMPRE desde `base` (los datos del usuario), así no cambian al pulsar una y otra. */
-  function strategies(base, rateOf, statsOf) {
+  /**
+   * Riesgo del plan (0-100) con datos calculados: histórico real de tus fondos (volatilidad, caídas, correlaciones),
+   * variación histórica de la inflación y tus entradas/salidas de dinero antes y después de jubilarte.
+   * La rentabilidad esperada se limita a la del mercado global para no premiar a un fondo solo por su rentabilidad pasada.
+   */
+  function risk(s, p, res, rateOf, inputs) {
+    const market = inputs?.market || null, infl = inputs?.infl || null;
+    const world = portfolio({ ...s, alloc: { VT: 100 }, prov: {} }, rateOf).total;
+    const exp = Math.min(p.total, world), volEst = p.vol / 100;
+    const mc = monteCarlo(s, exp, market, infl, volEst);
+    const score = Math.round(mc.score);
+    const [, level, color] = LEVELS.find(l => score < l[0]);
+    return { score, level, color, prob: mc.prob, exp, capped: p.total > world, vol: market ? market.vol : volEst,
+             maxDD: market ? market.maxDD : null, divRatio: market ? market.divRatio : null,
+             inflSd: infl ? infl.sd : null, inflYears: infl ? infl.years : null };
+  }
+
+  /** Estrategias: planes COMPLETOS (fondos, gestores, reparto, ahorro y retirada) calculados siempre desde `base`. */
+  function strategies(base, rateOf, inputsOf) {
+    const useFunds = (ns, alloc) => {
+      ns.alloc = structuredClone(alloc);
+      ns.prov = Object.fromEntries(Object.keys(alloc).map(id => [id, cheapest(config.FUNDS.find(f => f.id === id)).id]));
+    };
+    const A = config.STRATEGY_ALLOC;
     const defs = [
-      { id: 'early', title: '🏖️ Jubilarte cuanto antes', desc: 'Mismo ahorro; dejas de trabajar en cuanto el capital aguanta toda la jubilación.',
-        patch(ns, p) { const w = earliest(ns, p, r => r.depleted === null); if (!w) return false; ns.workYears = w; } },
-      { id: 'forever', title: '♾️ Capital que nunca baja', desc: `Retiras ${config.FOREVER_SPEND} €/mes y aun así el capital crece cada año (con inflación).`,
-        patch(ns, p) {
-          const spend = Math.max(config.FOREVER_SPEND, ns.retNeeds + ns.retLeisure), share = ns.needs + ns.leisure ? ns.needs / (ns.needs + ns.leisure) : 0.7;
-          ns.retLinked = false; ns.retNeeds = spend * share; ns.retLeisure = spend - ns.retNeeds;
-          const w = earliest(ns, p, r => r.depleted === null && !r.decline.some(Boolean)); if (!w) return false; ns.workYears = w;
-        } },
-      { id: 'grow', title: '🚀 Ahorrar más', desc: 'Recortas un 25 % el ocio, lo inviertes, 100 % renta variable global y el gestor más barato.',
+      { id: 'early', title: '🏖️ Jubilarte cuanto antes', desc: '100 % renta variable global (gestor más barato); dejas de trabajar en cuanto el capital aguanta toda la jubilación.',
         patch(ns) {
-          ns.invest += ns.leisure * 0.25; ns.leisure *= 0.75; ns.touched.leisure = true; ns.investAuto = false;
-          ns.alloc = { VT: 100 }; ns.prov = { VT: cheapest(config.FUNDS.find(f => f.id === 'VT')).id };
+          useFunds(ns, A.growth); ns.investAuto = true; ns.retLinked = true; normalize(ns);
+          const w = earliest(ns, portfolio(ns, rateOf), r => r.depleted === null); if (!w) return false; ns.workYears = w;
         } },
-      { id: 'safe', title: '🛡️ Prudente 60/40', desc: '60 % renta variable global y 40 % bonos: menos subidas, menos sustos.',
-        patch(ns) { ns.alloc = { VT: 60, AGG: 40 }; } },
+      { id: 'forever', title: '♾️ Capital que nunca baja', desc: `Retiras ${config.FOREVER_SPEND} €/mes y aun así el capital crece cada año (con inflación).`,
+        patch(ns) {
+          useFunds(ns, A.growth); ns.investAuto = true; normalize(ns);
+          const spend = Math.max(config.FOREVER_SPEND, ns.needs + ns.leisure), share = ns.needs + ns.leisure ? ns.needs / (ns.needs + ns.leisure) : 0.7;
+          ns.retLinked = false; ns.retNeeds = spend * share; ns.retLeisure = spend - ns.retNeeds;
+          const w = earliest(ns, portfolio(ns, rateOf), r => r.depleted === null && !r.decline.some(Boolean)); if (!w) return false; ns.workYears = w;
+        } },
+      { id: 'grow', title: '🚀 Ahorrar más', desc: 'Recortas un 25 % el ocio y ahorros, lo inviertes todo, 100 % renta variable global y el gestor más barato.',
+        patch(ns) { useFunds(ns, A.growth); ns.leisure *= 0.75; ns.touched.leisure = true; ns.investAuto = true; ns.retLinked = true; } },
+      { id: 'safe', title: '🛡️ Prudente 60/40', desc: '60 % renta variable global y 40 % bonos (gestores más baratos): menos subidas, menos sustos.',
+        patch(ns) { useFunds(ns, A.safe); ns.investAuto = true; ns.retLinked = true; } },
     ];
     return defs.map(d => {
       const ns = structuredClone(base);
-      const ok = d.patch(ns, portfolio(ns, rateOf)) !== false;
+      const ok = d.patch(ns) !== false;
       normalize(ns);
-      const p = portfolio(ns, rateOf);
-      const res = simulate(ns, p);
-      return { id: d.id, title: d.title, desc: d.desc, unavailable: !ok, state: ns, risk: risk(ns, p, res, statsOf), res };
+      const p = portfolio(ns, rateOf), res = simulate(ns, p);
+      return { id: d.id, title: d.title, desc: d.desc, unavailable: !ok, state: ns, risk: risk(ns, p, res, rateOf, inputsOf(ns)), res };
     });
   }
 

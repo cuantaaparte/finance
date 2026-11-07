@@ -7,7 +7,8 @@ import { dirname, join } from 'node:path';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const load = file => { const w = { App: {} }; new Function('window', readFileSync(join(root, file), 'utf8'))(w); return w.App; };
 const { config } = load('js/config.js');
-let old = {}; try { old = load('data/market-data.js').snapshot?.series || {}; } catch { /* primera vez */ }
+let old = {}, oldInflation = null;
+try { const snap = load('data/market-data.js').snapshot; old = snap?.series || {}; oldInflation = snap?.inflation || null; } catch { /* primera vez */ }
 
 const HEADERS = { 'User-Agent': 'Mozilla/5.0 (compatible; fondos-indexados-updater)' };
 
@@ -36,7 +37,15 @@ for (const f of config.FUNDS) {
 }
 if (!ok) { console.error('No se pudo descargar ningún fondo.'); process.exit(1); }
 
-const snapshot = { updated: new Date().toISOString(), series };
+// Inflación anual del país configurado (Banco Mundial, índice de precios al consumidor)
+let inflation = oldInflation;
+try {
+  const res = await fetch(`https://api.worldbank.org/v2/country/${config.INFLATION_COUNTRY}/indicator/FP.CPI.TOTL.ZG?format=json&per_page=100`, { headers: HEADERS });
+  const rows = ((await res.json())[1] || []).filter(r => r.value != null).map(r => [Number(r.date), Math.round(r.value * 100) / 100]).sort((a, b) => a[0] - b[0]);
+  if (rows.length > 10) { inflation = { country: config.INFLATION_COUNTRY, series: rows }; console.log(`Inflación ${config.INFLATION_COUNTRY}: ${rows.length} años`); }
+} catch (e) { console.warn('Inflación: no se pudo descargar (' + e.message + ')'); }
+
+const snapshot = { updated: new Date().toISOString(), series, inflation };
 writeFileSync(join(root, 'data/market-data.js'),
   `/* Generado por tools/update-data.mjs. No editar a mano. */\nwindow.App = window.App || {};\nwindow.App.snapshot = ${JSON.stringify(snapshot)};\n`);
 console.log(`Listo: ${ok}/${config.FUNDS.length} fondos actualizados.`);
