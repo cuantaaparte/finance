@@ -20,6 +20,13 @@
     return s;
   }
 
+  /** Punto de partida estándar (salario medio) para las estrategias; conserva fondos, inflación y comisiones del usuario. */
+  function averageProfile(s) {
+    const a = config.AVERAGE_PROFILE, n = structuredClone(s);
+    Object.assign(n, { net: a.net, initial: a.initial, workYears: a.workYears, investAuto: true, retLinked: true, touched: { needs: false, leisure: false } });
+    return normalize(n);
+  }
+
   /** Rentabilidad nominal neta de comisiones (fondo + bróker), dividendos netos de impuestos y riesgo ponderado. */
   function portfolio(s, rateOf) {
     const rows = Object.entries(s.alloc).map(([id, w]) => [config.FUNDS.find(f => f.id === id), w]).filter(([f]) => f);
@@ -93,5 +100,5 @@
     });
   }
 
-  App.finance = { normalize, portfolio, simulate, strategies, cheapest, providerOf };
+  App.finance = { normalize, averageProfile, portfolio, simulate, strategies, cheapest, providerOf };
 })(window.App = window.App || {});

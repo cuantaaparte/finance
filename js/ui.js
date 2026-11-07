@@ -169,7 +169,9 @@
   }
 
   function renderStrategies() {
-    $('#strategies').replaceChildren(...finance.strategies(base || state, rateOf).map(st =>
+    $$('#strat-base button').forEach(b => b.classList.toggle('on', b.dataset.sb === state.stratBase));
+    const start = base || state, source = state.stratBase === 'avg' ? finance.averageProfile(start) : start;
+    $('#strategies').replaceChildren(...finance.strategies(source, rateOf).map(st =>
       h('button', { type: 'button', class: 'strategy' + (st.id === active ? ' active' : ''), disabled: st.unavailable ? '' : null,
         onclick: () => { Object.assign(state, structuredClone(st.state)); active = st.id; refresh(false); } },
         h('b', {}, st.title), h('p', {}, st.unavailable ? 'No es alcanzable con tus datos actuales.' : st.desc),
@@ -195,6 +197,10 @@
 
   function init() {
     buildInputs();
+    [['avg', `Salario medio (${eur.format(config.AVERAGE_PROFILE.net)})`], ['mine', 'Mis datos']].forEach(([v, label]) =>
+      $('#strat-base').append(h('button', { type: 'button', 'data-sb': v, onclick: () => { state.stratBase = v; refresh(false); } }, label)));
+    const head = $('.top'), syncHead = () => document.documentElement.style.setProperty('--head-h', head.offsetHeight + 'px');
+    new ResizeObserver(syncHead).observe(head); syncHead();
     chart.init($('#chart'), $('#tip'));
     document.addEventListener('input', e => { const el = e.target.closest('[data-key]'); if (el) set(el.dataset.key, el); });
     $('#data-status').addEventListener('click', async () => { $('#data-status').textContent = 'Conectando…'; await data.loadAll(true); refresh(false); });

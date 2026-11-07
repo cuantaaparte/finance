@@ -40,6 +40,7 @@
     histYears: 10, brokerFee: 0.15, alloc: { VT: 100 }, prov: {},
     retLinked: true, retNeeds: 900, retLeisure: 270,
     showInvested: true, showPrice: true, showTotal: true,
+    stratBase: 'avg', // punto de partida de las estrategias: 'avg' (salario medio) | 'mine' (tus datos)
   };
 
   // Esquema declarativo: añadir un campo = añadir una línea. col = columna de escritorio ('a' | 'b').
@@ -47,7 +48,7 @@
     { title: 'Ingresos y gastos', col: 'a', fields: [
       { key: 'net', label: 'Sueldo neto', max: 8000, step: 50, unit: true },
       { key: 'needs', label: 'Necesidades básicas', max: 8000, step: 25, unit: true, pct: 'needsPct' },
-      { key: 'leisure', label: 'Ocio', max: 4000, step: 25, unit: true, pct: 'leisurePct' },
+      { key: 'leisure', label: 'Ocio y ahorros', max: 4000, step: 25, unit: true, pct: 'leisurePct' },
       { key: 'investAuto', label: 'Invertir todo lo que sobra', type: 'check' },
       { key: 'invest', label: 'Inversión', max: 8000, step: 25, unit: true, pct: 'investPct' },
     ]},
@@ -60,7 +61,7 @@
       { key: 'retireYears', label: 'Años de jubilación a cubrir', min: 5, max: 60, step: 1, suffix: 'años' },
       { key: 'retLinked', label: 'Mismos gastos que ahora', type: 'check' },
       { key: 'retNeeds', label: 'Necesidades básicas', max: 8000, step: 25, unit: true, linked: true },
-      { key: 'retLeisure', label: 'Ocio', max: 4000, step: 25, unit: true, linked: true },
+      { key: 'retLeisure', label: 'Ocio y ahorros', max: 4000, step: 25, unit: true, linked: true },
     ]},
     { title: 'Fondos y comisiones', col: 'b', custom: 'funds', fields: [
       { key: 'histYears', label: 'Años de histórico para la rentabilidad', min: 1, max: 30, step: 1, suffix: 'años' },
@@ -72,11 +73,10 @@
     STORAGE: { settings: 'fi.settings.v1', scenarios: 'fi.scenarios.v1', series: 'fi.series.v1' },
     DIV_TAX: 0.19, SERIES_TTL_MS: 24 * 3600 * 1000, FOREVER_SPEND: 2000, // € / mes que retira la estrategia "capital eterno"
     PROXIES: [
-      u => u,
       u => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u),
-      u => 'https://corsproxy.io/?' + encodeURIComponent(u),
       u => 'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(u),
     ],
+    AVERAGE_PROFILE: { net: 1800, initial: 1000, workYears: 20 }, // salario neto medio orientativo (€/mes); cámbialo a tu país
     FUNDS, DEFAULT_STATE, SECTIONS,
   };
 })(window.App = window.App || {});

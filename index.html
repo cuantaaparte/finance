@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
   <title>Simulador de fondos indexados</title>
+  <!-- Emoji como icono de la pestaña -->
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%93%88%3C/text%3E%3C/svg%3E">
   <link rel="stylesheet" href="css/styles.css">
   <!-- Scripts clásicos (no módulos) para que funcione con doble clic (file://). El orden importa. -->
   <script defer src="js/config.js"></script>
@@ -46,7 +48,10 @@
       </div>
     </section>
 
-    <section id="strat-card" class="card"><h2>Estrategias sugeridas</h2><div id="strategies" class="strategies"></div></section>
+    <section id="strat-card" class="card">
+      <div class="strat-head"><h2>Estrategias sugeridas</h2><div id="strat-base" class="seg" title="Punto de partida de las estrategias"></div></div>
+      <div id="strategies" class="strategies"></div>
+    </section>
     <aside id="col-a" class="col"></aside>
     <aside id="col-b" class="col"></aside>
 

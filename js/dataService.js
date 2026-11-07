@@ -3,7 +3,7 @@
 (function (App) {
   'use strict';
   const { config, storage } = App;
-  const YEAR = 31557600, SNAP_MAX_AGE = 3 * 864e5; // segundos / ms
+  const YEAR = 31557600; // segundos
   const series = {}, liveIds = new Set();
   let snapDate = null, terDate = null;
 
@@ -34,15 +34,14 @@
     return pts;
   }
 
-  // Directo + proxies a la vez; gana el primero que responda bien.
+  // Varios proxies a la vez; gana el primero que responda bien.
   function download(fund) {
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${fund.id}?range=max&interval=1mo`;
     return Promise.any(config.PROXIES.map(p => fetchJson(p(url)).then(parse)));
   }
 
   async function load(fund, force) {
-    const snapFresh = snapDate && Date.now() - Date.parse(snapDate) < SNAP_MAX_AGE && series[fund.id];
-    if (!force && snapFresh) return; // el archivo local es reciente: no hace falta internet
+    if (!force && snapDate && series[fund.id]) return; // hay archivo local: no se llama a internet (la insignia permite forzarlo)
     const hit = storage.get(config.STORAGE.series, {})[fund.id];
     if (!force && hit && Date.now() - hit.at < config.SERIES_TTL_MS) { series[fund.id] = hit.pts; liveIds.add(fund.id); return; }
     try {
