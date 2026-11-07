@@ -54,6 +54,30 @@
     } catch { /* se queda lo que hubiera (archivo local o estimación) */ }
   }
 
+  const monthKey = t => { const d = new Date(t * 1000); return d.getUTCFullYear() * 12 + d.getUTCMonth(); };
+  function monthlyReturns(id, years) {
+    const s = series[id];
+    if (!s || s.length < 13) return null;
+    const from = s[s.length - 1][0] - years * YEAR, out = new Map();
+    for (let i = 1; i < s.length; i++) if (s[i][0] >= from) out.set(monthKey(s[i][0]), s[i][1] / s[i - 1][1] - 1);
+    return out.size >= 12 ? out : null;
+  }
+
+  /** Volatilidad anual y caída máxima REALES de la cartera (con correlaciones), o null si falta histórico de algún fondo. */
+  function portfolioStats(alloc, years) {
+    const ids = Object.keys(alloc), total = ids.reduce((a, id) => a + alloc[id], 0) || 1;
+    const maps = ids.map(id => monthlyReturns(id, years));
+    if (!maps.length || maps.some(m => !m)) return null;
+    const keys = [...maps[0].keys()].filter(k => maps.every(m => m.has(k))).sort((a, b) => a - b);
+    if (keys.length < 12) return null;
+    const r = keys.map(k => maps.reduce((a, m, i) => a + m.get(k) * alloc[ids[i]] / total, 0));
+    const mean = r.reduce((a, x) => a + x, 0) / r.length;
+    const vol = Math.sqrt(r.reduce((a, x) => a + (x - mean) ** 2, 0) / (r.length - 1)) * Math.sqrt(12);
+    let v = 1, peak = 1, maxDD = 0;
+    r.forEach(x => { v *= 1 + x; peak = Math.max(peak, v); maxDD = Math.max(maxDD, 1 - v / peak); });
+    return { vol, maxDD, months: r.length };
+  }
+
   applyLocalFiles();
 
   App.data = {
@@ -64,6 +88,7 @@
       return { mode, count: liveIds.size, date: snapDate ? new Date(snapDate).toLocaleDateString('es-ES') : null };
     },
     terDate: () => terDate,
+    portfolioStats,
     /** Rentabilidad anual compuesta de los últimos `years` años (o estimación fija si no hay datos). */
     cagr(fund, years) {
       const s = series[fund.id];

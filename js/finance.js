@@ -72,8 +72,33 @@
     return null;
   }
 
+  const LEVELS = [[20, 'Muy bajo', 'green'], [38, 'Bajo', 'green'], [58, 'Medio', ''], [75, 'Alto', 'orange'], [101, 'Muy alto', 'red']];
+
+  /** Riesgo global del plan (0-100) a partir de 4 bloques: mercado, retirada, inflación y horizonte/esfuerzo. */
+  function risk(s, p, res, statsOf) {
+    const scale = (x, a, b) => clamp((x - a) / (b - a), 0, 1) * 100;
+    const st = statsOf ? statsOf(s) : null;
+    const vol = st ? st.vol : p.vol / 100, dd = st ? st.maxDD : vol * 3; // sin histórico: caída máx. ≈ 3× la volatilidad
+    // 1) Mercado: cuánto se mueven y cuánto han llegado a caer los fondos elegidos
+    const market = 0.5 * scale(vol, 0.04, 0.22) + 0.5 * scale(dd, 0.05, 0.5);
+    // 2) Retirada: tasa de retirada al jubilarte (4 % ≈ referencia) y duración de la jubilación; 100 si el dinero se acaba
+    const sustain = res.depleted !== null ? 100 : 0.8 * scale(res.withdrawalRate, 0.025, 0.06) + 0.2 * scale(s.retireYears, 25, 50);
+    // 3) Inflación: ¿aguantaría el plan si fuera 2 puntos mayor de lo supuesto? (tasa de retirada resultante) y lo alta que ya es la supuesta
+    const stress = simulate({ ...s, inflation: s.inflation + 2 }, p);
+    const wrS = stress.capital > 0 ? stress.spend * 12 / stress.capital : Infinity;
+    const shock = res.depleted !== null ? 100 : stress.depleted !== null ? 90 : scale(wrS, 0.03, 0.07);
+    const inflation = 0.6 * shock + 0.4 * scale(s.inflation, 2, 8);
+    // 4) Horizonte y esfuerzo: pocos años invirtiendo dejan poco margen; ahorrar casi nada o más del 30 % del sueldo es frágil
+    const save = s.net > 0 ? s.invest / s.net : 0;
+    const horizon = 0.6 * scale(s.workYears, 25, 8) + 0.4 * (save < 0.05 ? 80 : scale(save, 0.3, 0.6));
+    const score = Math.round(0.35 * market + 0.30 * sustain + 0.15 * inflation + 0.20 * horizon);
+    const [, level, color] = LEVELS.find(l => score < l[0]);
+    return { score, level, color, live: !!st, vol, maxDD: dd,
+             parts: { market: Math.round(market), sustain: Math.round(sustain), inflation: Math.round(inflation), horizon: Math.round(horizon) } };
+  }
+
   /** Estrategias calculadas SIEMPRE desde `base` (los datos del usuario), así no cambian al pulsar una y otra. */
-  function strategies(base, rateOf) {
+  function strategies(base, rateOf, statsOf) {
     const defs = [
       { id: 'early', title: '🏖️ Jubilarte cuanto antes', desc: 'Mismo ahorro; dejas de trabajar en cuanto el capital aguanta toda la jubilación.',
         patch(ns, p) { const w = earliest(ns, p, r => r.depleted === null); if (!w) return false; ns.workYears = w; } },
@@ -96,9 +121,10 @@
       const ok = d.patch(ns, portfolio(ns, rateOf)) !== false;
       normalize(ns);
       const p = portfolio(ns, rateOf);
-      return { id: d.id, title: d.title, desc: d.desc, unavailable: !ok, state: ns, risk: p.vol, res: simulate(ns, p) };
+      const res = simulate(ns, p);
+      return { id: d.id, title: d.title, desc: d.desc, unavailable: !ok, state: ns, risk: risk(ns, p, res, statsOf), res };
     });
   }
 
-  App.finance = { normalize, averageProfile, portfolio, simulate, strategies, cheapest, providerOf };
+  App.finance = { normalize, averageProfile, risk, portfolio, simulate, strategies, cheapest, providerOf };
 })(window.App = window.App || {});

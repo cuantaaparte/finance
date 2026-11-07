@@ -19,6 +19,8 @@
   let raf = 0;
   const factor = () => (state.period === 'year' ? 12 : 1);
   const rateOf = f => data.cagr(f, state.histYears);
+  // Riesgo real: se usa todo el histórico disponible (mín. 20 años) para que una ventana corta no oculte las grandes caídas
+  const statsOf = s => data.portfolioStats(s.alloc, Math.max(s.histYears, 20));
   const sumAlloc = () => Object.values(state.alloc).reduce((a, b) => a + b, 0);
 
   function h(tag, attrs = {}, ...kids) {
@@ -57,7 +59,8 @@
       h('div', { class: 'rcell' }, h('span', { class: 'ret' }), h('small', { class: 'ter' })),
       h('input', { type: 'number', min: 0, max: 100, step: 'any', 'data-fw': f.id }),
       h('span', { class: 'suf' }, '%'))));
-    box.append(h('div', { class: 'total', id: 'alloc-total' }), h('div', { class: 'total warn', id: 'hist-warn', hidden: '' }));
+    box.append(h('div', { class: 'total-row' }, h('div', { class: 'total', id: 'alloc-total' }), h('div', { class: 'total', id: 'risk-total' })),
+      h('div', { class: 'total warn', id: 'hist-warn', hidden: '' }));
     box.addEventListener('input', e => {
       const c = e.target.dataset.fcheck, w = e.target.dataset.fw, p = e.target.dataset.fprov;
       if (c) {
@@ -125,6 +128,7 @@
     const port = finance.portfolio(state, rateOf), res = finance.simulate(state, port);
     chart.render(res, state);
     renderKpis(res);
+    renderRisk(port, res);
     renderStrategies();
     renderScenarios();
     const st = data.status(), badge = $('#data-status');
@@ -157,6 +161,16 @@
     $('#ter-info').textContent = data.terDate() ? `TER actualizados: ${data.terDate()}` : 'TER de referencia';
   }
 
+  function renderRisk(port, res) {
+    const r = finance.risk(state, port, res, statsOf), el = $('#risk-total'), pc = x => Math.round(x * 100) + ' %';
+    el.textContent = `Riesgo: ${r.level} (${r.score}/100)`;
+    el.className = 'total' + (r.color ? ' risk-' + r.color : '');
+    el.title = `Mercado ${r.parts.market}/100 · volatilidad ${pc(r.vol)}, caída máxima ${pc(r.maxDD)}${r.live ? '' : ' (estimadas, sin histórico)'}\n`
+      + `Retirada ${r.parts.sustain}/100 · retiras ${Number.isFinite(res.withdrawalRate) ? pc(res.withdrawalRate) : '—'} del capital al año\n`
+      + `Inflación ${r.parts.inflation}/100 · prueba con +2 puntos de inflación\n`
+      + `Horizonte y esfuerzo ${r.parts.horizon}/100 · ${state.workYears} años invirtiendo`;
+  }
+
   function renderKpis(res) {
     const rate = res.withdrawalRate, risky = res.depleted !== null || rate > 0.04;
     const items = [
@@ -171,13 +185,13 @@
   function renderStrategies() {
     $$('#strat-base button').forEach(b => b.classList.toggle('on', b.dataset.sb === state.stratBase));
     const start = base || state, source = state.stratBase === 'avg' ? finance.averageProfile(start) : start;
-    $('#strategies').replaceChildren(...finance.strategies(source, rateOf).map(st =>
+    $('#strategies').replaceChildren(...finance.strategies(source, rateOf, statsOf).map(st =>
       h('button', { type: 'button', class: 'strategy' + (st.id === active ? ' active' : ''), disabled: st.unavailable ? '' : null,
         onclick: () => { Object.assign(state, structuredClone(st.state)); active = st.id; refresh(false); } },
         h('b', {}, st.title), h('p', {}, st.unavailable ? 'No es alcanzable con tus datos actuales.' : st.desc),
         st.unavailable ? null : h('div', { class: 'tags' },
           h('span', {}, `Trabajas ${st.state.workYears} años`), h('span', {}, `Capital ${eur.format(st.res.capital)}`),
-          h('span', {}, `Retiras ${eur.format(st.res.spend)}/mes`), h('span', {}, `Riesgo ~${Math.round(st.risk)} %`)))));
+          h('span', {}, `Retiras ${eur.format(st.res.spend)}/mes`), h('span', { class: st.risk.color ? 'risk-' + st.risk.color : '' }, `Riesgo ${st.risk.level} (${st.risk.score})`)))));
   }
 
   function renderScenarios() {
