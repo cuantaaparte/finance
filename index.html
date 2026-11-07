@@ -48,21 +48,24 @@
       </div>
     </section>
 
-    <section id="strat-card" class="card">
-      <div class="strat-head"><h2>Estrategias sugeridas</h2><div id="strat-base" class="seg" title="Punto de partida de las estrategias"></div></div>
-      <div id="strategies" class="strategies"></div>
-    </section>
+    <!-- Estrategias + supuestos: en PC tienen su propio scroll bajo la gráfica -->
+    <div id="side-scroll" class="side-scroll">
+      <section id="strat-card" class="card">
+        <div class="strat-head"><h2>Estrategias sugeridas</h2><div id="strat-base" class="seg" title="Punto de partida de las estrategias"></div></div>
+        <div id="strategies" class="strategies"></div>
+      </section>
+      <section id="scen-card" class="card">
+        <h2>Mis supuestos</h2>
+        <form id="save-form" class="save-form">
+          <input id="scenario-name" type="text" placeholder="Nombre del supuesto" maxlength="40">
+          <button type="submit">Guardar</button>
+        </form>
+        <ul id="scenarios" class="scenarios"></ul>
+      </section>
+    </div>
+
     <aside id="col-a" class="col"></aside>
     <aside id="col-b" class="col"></aside>
-
-    <section id="scen-card" class="card">
-      <h2>Mis supuestos</h2>
-      <form id="save-form" class="save-form">
-        <input id="scenario-name" type="text" placeholder="Nombre del supuesto" maxlength="40">
-        <button type="submit">Guardar</button>
-      </form>
-      <ul id="scenarios" class="scenarios"></ul>
-    </section>
   </main>
 </body>
 </html>

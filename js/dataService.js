@@ -3,7 +3,7 @@
 (function (App) {
   'use strict';
   const { config, storage } = App;
-  const YEAR = 31557600; // segundos
+  const YEAR = 31557600, STALE_MS = 14 * 864e5; // segundos / ms
   const series = {}, liveIds = new Set();
   let snapDate = null, terDate = null;
 
@@ -41,7 +41,8 @@
   }
 
   async function load(fund, force) {
-    if (!force && snapDate && series[fund.id]) return; // hay archivo local: no se llama a internet (la insignia permite forzarlo)
+    const stale = !snapDate || Date.now() - Date.parse(snapDate) > STALE_MS; // archivo local con más de 14 días: se intenta internet
+    if (!force && !stale && series[fund.id]) return;
     const hit = storage.get(config.STORAGE.series, {})[fund.id];
     if (!force && hit && Date.now() - hit.at < config.SERIES_TTL_MS) { series[fund.id] = hit.pts; liveIds.add(fund.id); return; }
     try {

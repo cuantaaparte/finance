@@ -2,7 +2,7 @@
 (function (App) {
   'use strict';
   const C = { invested: '#94a3b8', price: '#38bdf8', total: '#a78bfa', ok: '#34d399', bad: '#f87171', grid: 'rgba(255,255,255,.08)', text: '#8b97a9' };
-  const PAD = { l: 58, r: 14, t: 18, b: 28 };
+  const PAD = { l: 58, r: 14, t: 18, b: 28 }, BASE = { ...PAD };
   const compact = new Intl.NumberFormat('es-ES', { notation: 'compact', maximumFractionDigits: 1 });
   const eur = new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 });
   let canvas, tip, last, hover = null;
@@ -25,6 +25,8 @@
     if (!last) return;
     const { res, s } = last, w = canvas.clientWidth, h = canvas.clientHeight;
     if (!w) return;
+    const k = (parseFloat(getComputedStyle(document.documentElement).fontSize) || 16) / 16; // escala con el tamaño de la interfaz
+    for (const key in BASE) PAD[key] = BASE[key] * k;
     const iw = w - PAD.l - PAD.r, ih = h - PAD.t - PAD.b, dpr = window.devicePixelRatio || 1;
     canvas.width = w * dpr; canvas.height = h * dpr;
     const ctx = canvas.getContext('2d');
@@ -36,7 +38,7 @@
     const top = niceMax(Math.max(...vals, 1));
     const X = y => PAD.l + (y / res.years) * iw, Y = v => PAD.t + ih - (v / top) * ih;
 
-    ctx.font = '11px system-ui'; ctx.fillStyle = C.text; ctx.strokeStyle = C.grid; ctx.lineWidth = 1;
+    ctx.font = `${11 * k}px system-ui`; ctx.fillStyle = C.text; ctx.strokeStyle = C.grid; ctx.lineWidth = 1;
     ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
     for (let i = 0; i <= 4; i++) {
       const v = (top / 4) * i;
