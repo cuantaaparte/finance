@@ -74,7 +74,9 @@
     ]},
   ];
 
+  const VERSION = (() => { try { return new URL(document.currentScript.src).searchParams.get('v') || ''; } catch { return ''; } })(); // sale de index.html (?v=...)
   App.config = {
+    VERSION,
     STORAGE: { settings: 'fi.settings.v1', scenarios: 'fi.scenarios.v1', series: 'fi.series.v1' },
     DIV_TAX: 0.19, SERIES_TTL_MS: 24 * 3600 * 1000, FOREVER_SPEND: 2000, // € / mes que retira la estrategia "capital eterno"
     PROXIES: [

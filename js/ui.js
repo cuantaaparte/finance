@@ -180,6 +180,7 @@
       if ('linked' in el.dataset) el.disabled = state.retLinked;
     });
     $$('[data-unit]').forEach(e => (e.textContent = state.period === 'year' ? '(€ / año)' : '(€ / mes)'));
+    $('#hint-nominal').hidden = !state.showNominal; $('.legend').classList.toggle('nominal-on', !!state.showNominal);
     renderHist();
     renderFunds();
     renderExtremes();
@@ -309,6 +310,7 @@
 
   function init() {
     buildInputs();
+    $('#app-version').textContent = config.VERSION ? 'Versión ' + config.VERSION : '';
     [['avg', `Salario medio (${eur.format(config.AVERAGE_PROFILE.net)})`, 'Estrategias calculadas con un perfil estándar de salario medio'], ['mine', 'Mis datos', 'Estrategias calculadas con lo que has introducido tú']].forEach(([v, label, tip]) =>
       $('#strat-base').append(h('button', { type: 'button', 'data-sb': v, title: tip, onclick: () => { state.stratBase = v; refresh(false); } }, label)));
     const head = $('.top'), syncHead = () => document.documentElement.style.setProperty('--head-h', head.offsetHeight + 'px');
