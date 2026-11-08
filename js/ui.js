@@ -8,7 +8,8 @@
   const pct = (x, d = 1) => (x * 100).toFixed(d).replace('.', ',') + ' %';
   const round = (x, d = 2) => Math.round(x * 10 ** d) / 10 ** d;
   const PCT = { needsPct: 'needs', leisurePct: 'leisure', investPct: 'invest' };
-  const MONEY = new Set(['net', 'needs', 'leisure', 'invest', 'retNeeds', 'retLeisure']);
+  const RET_PCT = { retNeedsPct: 'retNeeds', retLeisurePct: 'retLeisure' }; // % sobre los ingresos de la inversión (suman 100 %)
+  const MONEY = new Set(['net', 'needs', 'leisure', 'invest', 'retIncome', 'retNeeds', 'retLeisure']);
 
   const state = Object.assign(structuredClone(config.DEFAULT_STATE), storage.get(config.STORAGE.settings, {}));
   if (!Object.keys(state.alloc || {}).length) state.alloc = { ...config.DEFAULT_STATE.alloc };
@@ -44,7 +45,7 @@
       h('input', { type: 'range', 'data-key': f.key, min: f.min ?? 0, max: f.max, step: f.step, 'data-max': f.max, 'data-step': f.step, ...link }),
       h('input', { type: 'number', 'data-key': f.key, step: 'any', min: f.min ?? 0, inputmode: 'decimal', ...link }),
       h('span', { class: 'suf' }, isMoney ? '€' : f.suffix || ''));
-    if (f.pct) row.append(h('input', { type: 'number', class: 'pct', 'data-key': f.pct, min: 0, max: 100, step: 'any', inputmode: 'decimal' }), h('span', { class: 'suf' }, '%'));
+    if (f.pct) row.append(h('input', { type: 'number', class: 'pct', 'data-key': f.pct, min: 0, max: 100, step: 'any', inputmode: 'decimal', ...link }), h('span', { class: 'suf' }, '%'));
     return h('div', { class: 'field', 'data-field': f.key }, h('label', {}, f.label, f.unit ? h('em', { 'data-unit': '' }) : null), row);
   }
 
@@ -88,17 +89,33 @@
     if (!isCheck && !Number.isFinite(v)) return;
     if (key === 'periodYearly') state.period = v ? 'year' : 'month';
     else if (key in PCT) { state[PCT[key]] = (state.net * v) / 100; flag(PCT[key]); }
+    else if (key in RET_PCT) setRetShare(key, v);
+    else if (key === 'retIncome') setRetIncome(v / factor());
     else if (MONEY.has(key)) { state[key] = v / factor(); flag(key); }
     else state[key] = v;
     refresh();
   }
+  /* Jubilación: ingresos de la inversión = necesidades + ocio. Cambiar el total reescala ambos; cambiar un % reparte el resto al otro. */
+  const retIncome = () => state.retNeeds + state.retLeisure;
+  function setRetIncome(v) {
+    const inc = retIncome();
+    if (inc > 0) { state.retNeeds *= v / inc; state.retLeisure *= v / inc; }
+    else { state.retNeeds = v * 0.7; state.retLeisure = v * 0.3; }
+  }
+  function setRetShare(key, pctValue) {
+    const inc = retIncome(), part = (inc * Math.min(100, Math.max(0, pctValue))) / 100;
+    if (key === 'retNeedsPct') { state.retNeeds = part; state.retLeisure = inc - part; }
+    else { state.retLeisure = part; state.retNeeds = inc - part; }
+  }
+  const valueOf = key => (key === 'retIncome' ? retIncome() : state[key]);
   function flag(k) {
     if (k === 'needs' || k === 'leisure') state.touched[k] = true;
     if (k === 'invest') state.investAuto = false;
   }
   function shown(key) {
     if (key in PCT) return state.net ? (state[PCT[key]] / state.net) * 100 : 0;
-    return MONEY.has(key) ? state[key] * factor() : state[key];
+    if (key in RET_PCT) return retIncome() > 0 ? (state[RET_PCT[key]] / retIncome()) * 100 : 0;
+    return MONEY.has(key) ? valueOf(key) * factor() : state[key];
   }
 
   /** userEdit = true: el usuario cambió algo → esos datos pasan a ser la base de las estrategias. */
@@ -179,7 +196,7 @@
     const out = (r, v) => r && ((r.gt != null && v > r.gt) || (r.lt != null && v < r.lt));
     $$('.field[data-field]').forEach(el => {
       const key = el.dataset.field, rule = config.EXTREMES[key];
-      const v = rule?.pctOfNet ? (state.net > 0 ? (state[key] / state.net) * 100 : NaN) : state[key];
+      const v = rule?.pctOfNet ? (state.net > 0 ? (valueOf(key) / state.net) * 100 : NaN) : valueOf(key);
       const hit = !rule || !Number.isFinite(v) ? null : out(rule.bad, v) ? 'bad' : out(rule.good, v) ? 'good' : null;
       el.classList.toggle('is-bad', hit === 'bad'); el.classList.toggle('is-good', hit === 'good');
       el.title = hit === 'bad' ? 'Valor extremo: muy pesimista' : hit === 'good' ? 'Valor extremo: demasiado optimista' : '';

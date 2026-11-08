@@ -39,7 +39,8 @@
           <label><input type="checkbox" data-key="showInvested"><b style="--c:#94a3b8"></b>Invertido</label>
           <label><input type="checkbox" data-key="showPrice"><b style="--c:#38bdf8"></b>Con rentabilidad</label>
           <label><input type="checkbox" data-key="showTotal"><b style="--c:#a78bfa"></b>+ dividendos</label>
-          <span class="hint">€ de hoy · <b class="dot ok"></b>sostenible <b class="dot bad"></b>consumes capital</span>
+          <label title="Mismo plan en euros nominales, sin descontar la inflación (lo que marcaría tu cuenta cada año)"><input type="checkbox" data-key="showNominal"><b style="--c:linear-gradient(90deg,#a78bfa,#fb923c)"></b>Sin ajustar a inflación</label>
+          <span class="hint">€ de hoy · <b class="dot ok"></b>sostenible <b class="dot bad"></b>consumes capital · sin ajustar: <b class="dot nup"></b>sube <b class="dot ndown"></b>baja</span>
         </div>
         <div class="chart-wrap">
           <canvas id="chart"></canvas>

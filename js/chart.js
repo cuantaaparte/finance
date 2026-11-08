@@ -1,7 +1,7 @@
 /* Gráfica en <canvas> sin librerías: dos fases (trabajo / jubilación), línea vertical y tooltip. */
 (function (App) {
   'use strict';
-  const C = { invested: '#94a3b8', price: '#38bdf8', total: '#a78bfa', ok: '#34d399', bad: '#f87171', grid: 'rgba(255,255,255,.08)', text: '#8b97a9' };
+  const C = { invested: '#94a3b8', price: '#38bdf8', total: '#a78bfa', ok: '#34d399', bad: '#f87171', nomUp: '#a78bfa', nomDown: '#fb923c', grid: 'rgba(255,255,255,.08)', text: '#8b97a9' };
   const PAD = { l: 58, r: 14, t: 18, b: 28 }, BASE = { ...PAD };
   const compact = new Intl.NumberFormat('es-ES', { notation: 'compact', maximumFractionDigits: 1 });
   const eur = new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 });
@@ -35,6 +35,7 @@
     const vals = [...res.total];
     if (s.showInvested) vals.push(...res.invested);
     if (s.showPrice) vals.push(...res.price.filter(v => v != null));
+    if (s.showNominal) vals.push(...res.nominal.slice(res.work));
     const top = niceMax(Math.max(...vals, 1));
     const X = y => PAD.l + (y / res.years) * iw, Y = v => PAD.t + ih - (v / top) * ih;
 
@@ -57,6 +58,8 @@
     if (s.showInvested) line(res.invested, 0, res.work, C.invested);
     if (s.showPrice) line(res.price, 0, res.work, C.price);
     if (s.showTotal) line(res.total, 0, res.work, C.total);
+    // Jubilación sin ajustar a inflación (euros nominales): lila si sube, naranja si baja. Se pinta debajo de la línea en € de hoy.
+    if (s.showNominal) for (let y = res.work; y < res.years; y++) line(res.nominal, y, y + 1, res.nominalDecline[y] ? C.nomDown : C.nomUp);
     for (let y = res.work; y < res.years; y++) line(res.total, y, y + 1, res.decline[y] ? C.bad : C.ok);
 
     ctx.setLineDash([6, 5]); ctx.strokeStyle = '#e6eaf2'; ctx.lineWidth = 1;
@@ -70,14 +73,15 @@
   }
 
   function onMove(e) {
-    const { res } = last, rect = canvas.getBoundingClientRect(), iw = rect.width - PAD.l - PAD.r;
+    const { res, s } = last, rect = canvas.getBoundingClientRect(), iw = rect.width - PAD.l - PAD.r;
     const y = Math.min(res.years, Math.max(0, Math.round(((e.clientX - rect.left - PAD.l) / iw) * res.years)));
     hover = y;
     const lines = [`Año ${y} · ${y <= res.work ? 'trabajando' : 'jubilado'}`];
     if (y <= res.work) lines.push(`Invertido: ${eur.format(res.invested[y])}`, `Con rentab.: ${eur.format(res.price[y])}`);
-    lines.push(`${y <= res.work ? '+ dividendos' : 'Capital'}: ${eur.format(res.total[y])}`);
+    lines.push(`${y <= res.work ? '+ dividendos' : 'Capital (€ de hoy)'}: ${eur.format(res.total[y])}`);
+    if (s.showNominal && y >= res.work) lines.push(`Sin ajustar (€ nominales): ${eur.format(res.nominal[y])}`);
     tip.textContent = lines.join('\n'); tip.hidden = false;
-    tip.style.left = Math.min(e.clientX - rect.left + 12, rect.width - 190) + 'px';
+    tip.style.left = Math.min(e.clientX - rect.left + 12, rect.width - 240) + 'px';
     draw();
   }
 

@@ -3,7 +3,7 @@
   'use strict';
   const P = (id, name, ter) => ({ id, name, ter });
   // id = ticker de Yahoo Finance usado como PROXY del índice. vol = volatilidad anual (%), yield = dividendo bruto (%),
-  // fallback = rentabilidad anual si no hay conexión. Los TER son ORIENTATIVOS: se sobrescriben con data/ters.json.
+  // fallback = rentabilidad anual si no hay conexión. Los TER son ORIENTATIVOS: se sobrescriben con data/ters.js.
   const FUNDS = [
     { id: 'VT', name: 'Global All-World (FTSE)', vol: 15, yield: 1.9, fallback: 0.080, providers: [
       P('vt-vanguard', 'Vanguard FTSE All-World', 0.19), P('vt-invesco', 'Invesco FTSE All-World', 0.15)] },
@@ -39,7 +39,7 @@
     initial: 1000, workYears: 20, retireYears: 30, inflation: 2.5,
     histYears: 10, brokerFee: 0.15, alloc: { VT: 100 }, prov: {},
     retLinked: true, retNeeds: 900, retLeisure: 270,
-    showInvested: true, showPrice: true, showTotal: true,
+    showInvested: true, showPrice: true, showTotal: true, showNominal: true,
     stratBase: 'avg', // punto de partida de las estrategias: 'avg' (salario medio) | 'mine' (tus datos)
   };
 
@@ -49,8 +49,10 @@
       { key: 'net', label: 'Sueldo neto', max: 8000, step: 50, unit: true },
       { key: 'needs', label: 'Necesidades básicas', max: 8000, step: 25, unit: true, pct: 'needsPct' },
       { key: 'leisure', label: 'Ocio y ahorros', max: 4000, step: 25, unit: true, pct: 'leisurePct' },
+    ]},
+    { title: 'Inversión', col: 'a', fields: [
       { key: 'investAuto', label: 'Invertir todo lo que sobra', type: 'check' },
-      { key: 'invest', label: 'Inversión', max: 8000, step: 25, unit: true, pct: 'investPct' },
+      { key: 'invest', label: 'Cantidad a invertir', max: 8000, step: 25, unit: true, pct: 'investPct' },
     ]},
     { title: 'Plan de inversión', col: 'a', fields: [
       { key: 'initial', label: 'Inversión inicial', max: 200000, step: 500, suffix: '€' },
@@ -60,8 +62,10 @@
     { title: 'Vivir de las inversiones', col: 'a', fields: [
       { key: 'retireYears', label: 'Años de jubilación a cubrir', min: 5, max: 60, step: 1, suffix: 'años' },
       { key: 'retLinked', label: 'Mismos gastos que ahora', type: 'check' },
-      { key: 'retNeeds', label: 'Necesidades básicas', max: 8000, step: 25, unit: true, linked: true },
-      { key: 'retLeisure', label: 'Ocio y ahorros', max: 4000, step: 25, unit: true, linked: true },
+      // Lo que retiras cada mes = necesidades + ocio. Los % de abajo son sobre estos ingresos (suman 100 %).
+      { key: 'retIncome', label: 'Ingresos de la inversión', max: 8000, step: 50, unit: true, linked: true },
+      { key: 'retNeeds', label: 'Necesidades básicas', max: 8000, step: 25, unit: true, pct: 'retNeedsPct', linked: true },
+      { key: 'retLeisure', label: 'Ocio y ahorros', max: 4000, step: 25, unit: true, pct: 'retLeisurePct', linked: true },
     ]},
     { title: 'Fondos y comisiones', col: 'b', custom: 'funds', fields: [
       { key: 'histYears', label: 'Años de histórico para la rentabilidad', min: 1, max: 30, step: 1, suffix: 'años' },
@@ -92,6 +96,7 @@
       inflation: { bad: { gt: 6 }, good: { lt: 1 } },
       brokerFee: { bad: { gt: 1 } },
       retireYears: { bad: { gt: 50 }, good: { lt: 10 } },
+      retIncome: { pctOfNet: true, bad: { gt: 120 }, good: { lt: 10 } }, // retiras más de 1,2 veces tu sueldo actual / menos del 10 %
       retNeeds: { pctOfNet: true, bad: { gt: 85 }, good: { lt: 5 } },
       retLeisure: { pctOfNet: true, bad: { gt: 50 }, good: { lt: 5 } },
     },

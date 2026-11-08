@@ -17,6 +17,7 @@
     const free = s.net - s.needs - s.leisure;
     s.invest = s.investAuto ? free : clamp(s.invest, 0, free);
     if (s.retLinked) { s.retNeeds = s.needs; s.retLeisure = s.leisure; }
+    else { s.retNeeds = Math.max(0, s.retNeeds); s.retLeisure = Math.max(0, s.retLeisure); }
     return s;
   }
 
@@ -62,7 +63,10 @@
       if (!working && t === 0 && depleted === null) depleted = y + 1;
     }
     const capital = total[s.workYears];
-    return { years, work: s.workYears, invested, price, total, decline, depleted, capital, spend,
+    // Mismo plan sin descontar la inflación: lo que marcaría la cuenta en euros "de cada año" (nominales).
+    const nominal = total.map((t, y) => t * Math.pow(1 + infl, y));
+    const nominalDecline = decline.map((_, y) => y >= s.workYears && nominal[y + 1] < nominal[y] * 0.9999);
+    return { years, work: s.workYears, invested, price, total, decline, nominal, nominalDecline, depleted, capital, spend,
              withdrawalRate: capital > 0 ? spend * 12 / capital : Infinity,
              realReturn: (1 + p.total) / (1 + infl) - 1 };
   }
