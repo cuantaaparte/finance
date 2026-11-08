@@ -37,7 +37,8 @@
     net: 1800, needs: 900, leisure: 270, invest: 630,   // importes SIEMPRE guardados en € / mes
     investAuto: true, touched: { needs: false, leisure: false },
     initial: 1000, workYears: 20, retireYears: 30, inflation: 2.5,
-    histYears: 10, brokerFee: 0.15, alloc: { VT: 100 }, prov: {},
+    histFrom: null, histTo: null, brokerFee: 0.15,   // histFrom/histTo: años del histórico (null = por defecto: desde que hay datos de todos los índices hasta hoy)
+    alloc: { VT: 100 }, prov: {},
     retLinked: true, retNeeds: 900, retLeisure: 270,
     showInvested: true, showPrice: true, showTotal: true, showNominal: false,
     stratBase: 'avg', // punto de partida de las estrategias: 'avg' (salario medio) | 'mine' (tus datos)
@@ -68,7 +69,7 @@
       { key: 'retLeisure', label: 'Ocio y ahorros', max: 4000, step: 25, unit: true, pct: 'retLeisurePct', linked: true },
     ]},
     { id: 'funds', title: 'Fondos y comisiones', col: 'b', custom: 'funds', fields: [
-      { key: 'histYears', label: 'Años de histórico para la rentabilidad', min: 1, max: 30, step: 1, suffix: 'años' },
+      { key: 'histRange', label: 'Periodo de histórico para la rentabilidad', type: 'range2' },
       { key: 'brokerFee', label: 'Comisión anual del bróker', max: 1.5, step: 0.01, suffix: '%' },
     ]},
   ];

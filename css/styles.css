@@ -66,6 +66,20 @@ input[type=range]{accent-color:var(--accent)}
 .total{font-size:.72rem;color:var(--muted);margin-top:.3rem}.total.warn{color:#fbbf24}
 .total.risk-green,.tags .risk-green{color:var(--ok)}.total.risk-orange,.tags .risk-orange{color:#fb923c}.total.risk-red,.tags .risk-red{color:var(--bad)}
 .total.risk-green,.total.risk-orange,.total.risk-red{font-weight:600}
+.fnote{color:var(--muted);font-size:.72rem;line-height:1.35;margin:.1rem 0 .35rem}
+.link{background:none;border:0;color:var(--accent);font:inherit;font-size:.72rem;padding:0;margin:-.25rem 0 .55rem;cursor:pointer;text-align:left}
+.link:hover{text-decoration:underline}
+input.yr{width:4.1rem}
+/* Slider doble (periodo de histórico): dos <input range> superpuestos; solo las "bolas" reciben el ratón */
+.dual{position:relative;flex:1;min-width:60px;height:18px}
+.dual .track,.dual .fill{position:absolute;top:50%;height:4px;margin-top:-2px;border-radius:2px}
+.dual .track{left:0;right:0;background:#2a3547}
+.dual .fill{background:var(--accent);left:calc(9px + (100% - 18px) * var(--lo,0));right:calc(9px + (100% - 18px) * (1 - var(--hi,1)))}
+.pair .dual input[type=range]{position:absolute;inset:0;width:100%;height:100%;margin:0;min-width:0;background:none;pointer-events:none;-webkit-appearance:none;appearance:none}
+.dual input[type=range]::-webkit-slider-runnable-track{background:transparent;height:18px}
+.dual input[type=range]::-moz-range-track{background:transparent;height:18px}
+.dual input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;pointer-events:auto;width:18px;height:18px;border-radius:50%;background:var(--accent);border:2px solid var(--card);cursor:pointer}
+.dual input[type=range]::-moz-range-thumb{pointer-events:auto;width:14px;height:14px;border-radius:50%;background:var(--accent);border:2px solid var(--card);cursor:pointer}
 .note{color:var(--muted);font-size:.72rem;margin:-.3rem 0 .6rem}
 /* Valores extremos: rojo = pesimista, verde = demasiado optimista */
 @keyframes glow-bad{from{box-shadow:0 0 3px rgba(248,113,113,.4)}to{box-shadow:0 0 12px rgba(248,113,113,.95)}}

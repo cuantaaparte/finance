@@ -111,6 +111,19 @@
     return { mean: v.reduce((a, x) => a + x, 0) / v.length, sd: sdOf(v), years: v.length };
   }
 
+  const keyCache = new WeakMap(); // claves de mes de cada serie (se calculan una sola vez)
+  const keysOf = pts => { let k = keyCache.get(pts); if (!k) { k = pts.map(p => monthKey(p[0])); keyCache.set(pts, k); } return k; };
+
+  /** Años cubiertos por los datos: min = el índice con más historia, common = desde cuándo hay datos de TODOS los índices,
+   *  max = último año con datos, lastKey = último mes con datos (clave año*12+mes). */
+  function bounds() {
+    const ids = Object.keys(series).filter(id => series[id]?.length > 12);
+    if (!ids.length) { const y = new Date().getFullYear(); return { min: y - 30, common: y - 15, max: y, lastKey: y * 12 + 10 }; }
+    const first = ids.map(id => Math.floor(keysOf(series[id])[0] / 12));
+    const lastKey = Math.max(...ids.map(id => keysOf(series[id]).at(-1))), max = Math.floor(lastKey / 12);
+    return { min: Math.min(...first), common: Math.min(Math.max(...first), max - 1), max, lastKey };
+  }
+
   applyLocalFiles();
 
   App.data = {
@@ -121,15 +134,22 @@
       return { mode, count: liveIds.size, date: snapDate ? new Date(snapDate).toLocaleDateString('es-ES') : null };
     },
     terDate: () => terDate,
-    portfolioStats, inflationStats,
-    /** Rentabilidad anual compuesta de los últimos `years` años (o estimación fija si no hay datos). */
-    cagr(fund, years) {
+    portfolioStats, inflationStats, bounds,
+    /** Rentabilidad anual compuesta (precio, sin dividendos) entre el cierre de diciembre del año anterior a `range.from`
+     *  y el cierre de diciembre de `range.to` (o el último dato si `to` es el año en curso). Si el fondo empieza más tarde,
+     *  se parte de su primer dato (`lateBy` = meses de retraso). Sin datos suficientes: estimación fija. */
+    cagr(fund, range = {}) {
       const s = series[fund.id];
       if (s && s.length > 12) {
-        const last = s[s.length - 1];
-        const first = s.find(p => p[0] >= last[0] - years * YEAR) || s[0];
-        const span = (last[0] - first[0]) / YEAR;
-        if (span >= 1) return { rate: Math.pow(last[1] / first[1], 1 / span) - 1, live: true, span };
+        const b = bounds(), keys = keysOf(s);
+        const wantStart = ((range.from ?? b.common) - 1) * 12 + 11, to = range.to ?? b.max, wantEnd = to >= b.max ? Infinity : to * 12 + 11;
+        const i = keys.findIndex(k => k >= wantStart);
+        let j = keys.length - 1;
+        while (j >= 0 && keys[j] > wantEnd) j--;
+        if (i >= 0 && j > i) {
+          const span = (keys[j] - keys[i]) / 12;
+          if (span >= 1) return { rate: Math.pow(s[j][1] / s[i][1], 1 / span) - 1, live: true, span, startKey: keys[i], endKey: keys[j], lateBy: keys[i] - wantStart };
+        }
       }
       return { rate: fund.fallback, live: false, span: 0 };
     },

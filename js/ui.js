@@ -14,6 +14,7 @@
   const state = Object.assign(structuredClone(config.DEFAULT_STATE), storage.get(config.STORAGE.settings, {}));
   if (!Object.keys(state.alloc || {}).length) state.alloc = { ...config.DEFAULT_STATE.alloc };
   state.prov = state.prov || {};
+  delete state.histYears; // ajuste antiguo (años hacia atrás), sustituido por histFrom/histTo
   let base = null;          // últimos datos introducidos por el usuario: de aquí salen las estrategias
   let active = null;        // estrategia aplicada actualmente
   let scenarios = storage.get(config.STORAGE.scenarios, []);
@@ -22,9 +23,19 @@
   const VIEW_KEYS = ['stratBase', 'period', 'showInvested', 'showPrice', 'showTotal', 'showNominal'];
   const applyState = next => { const keep = Object.fromEntries(VIEW_KEYS.map(k => [k, state[k]])); Object.assign(state, structuredClone(next), keep); };
   const factor = () => (state.period === 'year' ? 12 : 1);
-  const rateOf = f => data.cagr(f, state.histYears);
+  const clamp = (x, a, b) => Math.min(Math.max(x, a), b);
+  /** Periodo de histórico elegido: por defecto, desde que hay datos de TODOS los índices hasta el último dato. `years` = duración real. */
+  function histRange(s = state) {
+    const b = data.bounds();
+    const to = clamp(s.histTo ?? b.max, b.min + 1, b.max), from = clamp(s.histFrom ?? b.common, b.min, to - 1);
+    const startKey = (from - 1) * 12 + 11, endKey = to >= b.max ? b.lastKey : to * 12 + 11;
+    return { from, to, b, years: (endKey - startKey) / 12 };
+  }
+  const rateOf = f => data.cagr(f, histRange());
   // Datos del riesgo: todo el histórico disponible (mín. 20 años, para que una ventana corta no oculte las grandes caídas) e inflación de los últimos 30 años
-  const inputsOf = s => ({ market: data.portfolioStats(s.alloc, Math.max(s.histYears, 20)), infl: data.inflationStats(30) });
+  const inputsOf = s => ({ market: data.portfolioStats(s.alloc, Math.max(Math.ceil(histRange(s).years), 20)), infl: data.inflationStats(30) });
+  const mLabel = key => new Date(Date.UTC(Math.floor(key / 12), key % 12, 1)).toLocaleDateString('es-ES', { month: 'short', year: 'numeric', timeZone: 'UTC' });
+  const fmtYears = y => { const r = round(y, 1); return (Number.isInteger(r) ? String(r) : r.toFixed(1).replace('.', ',')) + ' años'; };
   const sumAlloc = () => Object.values(state.alloc).reduce((a, b) => a + b, 0);
 
   function h(tag, attrs = {}, ...kids) {
@@ -40,7 +51,20 @@
   }
 
   /* ---------- Construcción ---------- */
+  /** Slider doble (año inicial y final) + casillas de teclado; la duración es solo una descripción. */
+  function buildHistRange(f) {
+    const rng = w => h('input', { type: 'range', 'data-hist': w, step: 1, 'aria-label': w === 'lo' ? 'Año inicial' : 'Año final' });
+    const num = w => h('input', { type: 'number', class: 'yr', 'data-hist': w, step: 1, inputmode: 'numeric', 'aria-label': w === 'from' ? 'Año inicial' : 'Año final' });
+    return h('div', { class: 'field', 'data-field': f.key },
+      h('label', {}, f.label, h('em', { id: 'hist-len' })),
+      h('div', { class: 'pair' }, h('div', { class: 'dual' }, h('div', { class: 'track' }), h('div', { class: 'fill' }), rng('lo'), rng('hi')),
+        num('from'), h('span', { class: 'suf' }, '–'), num('to')),
+      h('button', { type: 'button', class: 'link', id: 'hist-reset', hidden: '', onclick: () => { state.histFrom = state.histTo = null; refresh(); } },
+        '↺ Volver al periodo por defecto (desde que hay datos de todos los índices hasta hoy)'));
+  }
+
   function buildField(f) {
+    if (f.type === 'range2') return buildHistRange(f);
     const link = f.linked ? { 'data-linked': '' } : {};
     if (f.type === 'check') return h('label', { class: 'check' }, h('input', { type: 'checkbox', 'data-key': f.key }), f.label);
     const isMoney = MONEY.has(f.key);
@@ -56,6 +80,7 @@
     const box = h('div', { id: 'funds' });
     box.append(h('div', { class: 'tools' }, h('small', { id: 'ter-info' }),
       h('button', { type: 'button', onclick: () => { config.FUNDS.forEach(f => { state.prov[f.id] = finance.cheapest(f).id; }); refresh(); } }, 'Gestor más barato')));
+    box.append(h('p', { class: 'fnote', id: 'funds-note' }));
     config.FUNDS.forEach(f => box.append(h('div', { class: 'fund', 'data-fund': f.id },
       h('input', { type: 'checkbox', id: 'f-' + f.id, 'data-fcheck': f.id }),
       h('div', { class: 'fmain' }, h('b', {}, f.name),
@@ -97,6 +122,18 @@
     else if (MONEY.has(key)) { state[key] = v / factor(); flag(key); }
     else state[key] = v;
     refresh();
+  }
+  /** Cambia el periodo de histórico. Las casillas solo aceptan años de 4 cifras dentro del rango mientras escribes; al salir (commit) se ajusta. */
+  function onHist(which, el, commit) {
+    const b = data.bounds(), num = which === 'from' || which === 'to', v = Math.round(parseFloat(el.value));
+    if (!Number.isFinite(v) || (num && !commit && (v < b.min || v > b.max || String(v).length < 4))) { if (commit) renderHist(); return; }
+    let { from, to } = histRange();
+    if (which === 'lo' || which === 'from') from = clamp(v, b.min, to - 1);
+    else to = clamp(v, from + 1, b.max);
+    state.histTo = to >= b.max ? null : to;
+    state.histFrom = from === b.common && state.histTo === null ? null : from;
+    refresh();
+    if (commit) renderHist(true);
   }
   /* Jubilación: ingresos de la inversión = necesidades + ocio. Cambiar el total reescala ambos; cambiar un % reparte el resto al otro. */
   const retIncome = () => state.retNeeds + state.retLeisure;
@@ -143,6 +180,7 @@
       if ('linked' in el.dataset) el.disabled = state.retLinked;
     });
     $$('[data-unit]').forEach(e => (e.textContent = state.period === 'year' ? '(€ / año)' : '(€ / mes)'));
+    renderHist();
     renderFunds();
     renderExtremes();
 
@@ -157,7 +195,22 @@
     badge.classList.toggle('live', st.mode !== 'none');
   }
 
+  function renderHist(force = false) {
+    const { from, to, b, years } = histRange(), q = w => $(`[data-hist="${w}"]`), span = b.max - b.min || 1;
+    ['lo', 'hi', 'from', 'to'].forEach(w => { q(w).min = b.min; q(w).max = b.max; });
+    q('lo').value = from; q('hi').value = to;
+    if (force || document.activeElement !== q('from')) q('from').value = from;
+    if (force || document.activeElement !== q('to')) q('to').value = to;
+    const dual = $('.dual'); dual.style.setProperty('--lo', (from - b.min) / span); dual.style.setProperty('--hi', (to - b.min) / span);
+    q('lo').style.zIndex = (from - b.min) / span > 0.5 ? 3 : 1; // si se juntan al final, el de la izquierda queda accesible
+    const len = $('#hist-len'); len.textContent = '= ' + fmtYears(years);
+    len.title = `Del cierre de ${mLabel((from - 1) * 12 + 11)} al de ${mLabel(to >= b.max ? b.lastKey : to * 12 + 11)}`;
+    $('#hist-reset').hidden = state.histFrom == null && state.histTo == null;
+  }
+
   function renderFunds() {
+    const infl = String(round(state.inflation, 2)).replace('.', ',');
+    $('#funds-note').textContent = `Cifra de cada fondo: rentabilidad anual media del índice en el periodo elegido, en € nominales y sin dividendos. En la simulación se le resta a cada fondo la inflación que has elegido (${infl} %), además del TER y la comisión del bróker, y se le suma su dividendo.`;
     $$('.fund').forEach(row => {
       const f = config.FUNDS.find(x => x.id === row.dataset.fund), on = f.id in state.alloc, r = rateOf(f);
       $('[data-fcheck]', row).checked = on;
@@ -167,17 +220,17 @@
       const w = $('[data-fw]', row); w.disabled = !on;
       if (document.activeElement !== w) w.value = on ? round(state.alloc[f.id]) : '';
       const ret = $('.ret', row); ret.textContent = pct(r.rate); ret.classList.toggle('neg', r.rate < 0);
-      ret.title = r.live ? `Rentabilidad anual real de los últimos ${Math.round(r.span)} años` : 'Estimada (sin datos reales)';
+      ret.title = r.live ? `Rentabilidad anual media del índice entre ${mLabel(r.startKey)} y ${mLabel(r.endKey)} (${fmtYears(r.span)}), sin dividendos ni inflación` : 'Estimación fija (sin datos reales en este periodo)';
       $('.ter', row).textContent = 'TER ' + String(finance.providerOf(state, f).ter).replace('.', ',') + ' %';
     });
     const t = sumAlloc(), el = $('#alloc-total');
     el.textContent = `Reparto: ${round(t, 1)} %` + (Math.abs(t - 100) > 0.1 ? ' (se normaliza a 100 %)' : '');
     el.classList.toggle('warn', Math.abs(t - 100) > 0.1);
     const warn = $('#hist-warn'), selected = Object.keys(state.alloc).map(id => config.FUNDS.find(x => x.id === id)).filter(Boolean);
-    const short = selected.filter(f => { const r = rateOf(f); return r.live && r.span < state.histYears - 0.5; });
+    const partial = selected.map(f => [f, rateOf(f)]).filter(([, r]) => !r.live || r.lateBy > 3);
     warn.textContent = data.status().mode === 'none'
       ? 'Sin datos reales: la rentabilidad es una estimación fija y no cambia con los años.'
-      : short.length ? `${short.map(f => f.name).join(', ')}: solo hay ${Math.round(Math.min(...short.map(f => rateOf(f).span)))} años de histórico; se usa el máximo disponible.` : '';
+      : partial.length ? `Sin histórico completo en este periodo: ${partial.map(([f, r]) => r.live ? `${f.name} (datos desde ${Math.floor(r.startKey / 12)})` : `${f.name} (sin datos: estimación fija)`).join(', ')}. Se usa el máximo disponible.` : '';
     warn.hidden = !warn.textContent;
     $('#ter-info').textContent = data.terDate() ? `TER actualizados: ${data.terDate()}` : 'TER de referencia';
   }
@@ -238,7 +291,7 @@
     const save = () => storage.set(config.STORAGE.scenarios, scenarios);
     const summary = sc => {
       const s = sc.state, m = s.period === 'year' ? 12 : 1, u = s.period === 'year' ? '/año' : '/mes';
-      return `Neto ${eur.format(s.net * m)}${u} · invierte ${eur.format(s.invest * m)}${u} · inicial ${eur.format(s.initial)} · ${s.workYears} años · inflación ${s.inflation} % · histórico ${s.histYears} a. · bróker ${s.brokerFee} % · `
+      return `Neto ${eur.format(s.net * m)}${u} · invierte ${eur.format(s.invest * m)}${u} · inicial ${eur.format(s.initial)} · ${s.workYears} años · inflación ${s.inflation} % · histórico ${s.histFrom || s.histTo ? `${s.histFrom ?? '…'}–${s.histTo ?? 'hoy'}` : 'por defecto'} · bróker ${s.brokerFee} % · `
         + Object.entries(s.alloc).map(([id, w]) => `${id} ${round(w, 1)} %`).join(', ');
     };
     $('#scenarios').replaceChildren(...scenarios.map(sc => h('li', {},
@@ -257,6 +310,8 @@
     new ResizeObserver(syncHead).observe(head); syncHead();
     chart.init($('#chart'), $('#tip'));
     document.addEventListener('input', e => { const el = e.target.closest('[data-key]'); if (el) set(el.dataset.key, el); });
+    document.addEventListener('input', e => { if (e.target.dataset?.hist) onHist(e.target.dataset.hist, e.target, false); });
+    document.addEventListener('change', e => { if (e.target.dataset?.hist) onHist(e.target.dataset.hist, e.target, true); });
     // Si dejas un número vacío y sales del campo, se restaura el valor real (el estado no cambia mientras está vacío).
     document.addEventListener('focusout', e => { if (e.target.matches?.('input[type=number]') && e.target.value.trim() === '') refresh(false); });
     $('#data-status').addEventListener('click', async () => { $('#data-status').textContent = 'Conectando…'; await data.loadAll(true); refresh(false); });
