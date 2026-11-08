@@ -39,27 +39,27 @@
     initial: 1000, workYears: 20, retireYears: 30, inflation: 2.5,
     histYears: 10, brokerFee: 0.15, alloc: { VT: 100 }, prov: {},
     retLinked: true, retNeeds: 900, retLeisure: 270,
-    showInvested: true, showPrice: true, showTotal: true, showNominal: true,
+    showInvested: true, showPrice: true, showTotal: true, showNominal: false,
     stratBase: 'avg', // punto de partida de las estrategias: 'avg' (salario medio) | 'mine' (tus datos)
   };
 
   // Esquema declarativo: añadir un campo = añadir una línea. col = columna de escritorio ('a' | 'b').
   const SECTIONS = [
-    { title: 'Ingresos y gastos', col: 'a', fields: [
+    { id: 'income', title: 'Ingresos y gastos', col: 'a', fields: [
       { key: 'net', label: 'Sueldo neto', max: 8000, step: 50, unit: true },
       { key: 'needs', label: 'Necesidades básicas', max: 8000, step: 25, unit: true, pct: 'needsPct' },
       { key: 'leisure', label: 'Ocio y ahorros', max: 4000, step: 25, unit: true, pct: 'leisurePct' },
     ]},
-    { title: 'Inversión', col: 'a', fields: [
+    { id: 'invest', title: 'Inversión', col: 'a', fields: [
       { key: 'investAuto', label: 'Invertir todo lo que sobra', type: 'check' },
       { key: 'invest', label: 'Cantidad a invertir', max: 8000, step: 25, unit: true, pct: 'investPct' },
     ]},
-    { title: 'Plan de inversión', col: 'a', fields: [
+    { id: 'plan', title: 'Plan de inversión', col: 'a', fields: [
       { key: 'initial', label: 'Inversión inicial', max: 200000, step: 500, suffix: '€' },
       { key: 'workYears', label: 'Años invirtiendo mientras cobras', min: 1, max: 50, step: 1, suffix: 'años' },
       { key: 'inflation', label: 'Inflación media', max: 10, step: 0.1, suffix: '%' },
     ]},
-    { title: 'Vivir de las inversiones', col: 'a', fields: [
+    { id: 'retire', title: 'Vivir de las inversiones', col: 'a', note: 'Importes en € de hoy: el gráfico ya los ajusta a la inflación año a año.', fields: [
       { key: 'retireYears', label: 'Años de jubilación a cubrir', min: 5, max: 60, step: 1, suffix: 'años' },
       { key: 'retLinked', label: 'Mismos gastos que ahora', type: 'check' },
       // Lo que retiras cada mes = necesidades + ocio. Los % de abajo son sobre estos ingresos (suman 100 %).
@@ -67,7 +67,7 @@
       { key: 'retNeeds', label: 'Necesidades básicas', max: 8000, step: 25, unit: true, pct: 'retNeedsPct', linked: true },
       { key: 'retLeisure', label: 'Ocio y ahorros', max: 4000, step: 25, unit: true, pct: 'retLeisurePct', linked: true },
     ]},
-    { title: 'Fondos y comisiones', col: 'b', custom: 'funds', fields: [
+    { id: 'funds', title: 'Fondos y comisiones', col: 'b', custom: 'funds', fields: [
       { key: 'histYears', label: 'Años de histórico para la rentabilidad', min: 1, max: 30, step: 1, suffix: 'años' },
       { key: 'brokerFee', label: 'Comisión anual del bróker', max: 1.5, step: 0.01, suffix: '%' },
     ]},

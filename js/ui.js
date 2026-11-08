@@ -18,6 +18,9 @@
   let active = null;        // estrategia aplicada actualmente
   let scenarios = storage.get(config.STORAGE.scenarios, []);
   let raf = 0;
+  // Ajustes de VISTA que una estrategia no debe pisar (antes, al aplicar una, volvía a "Salario medio" porque la copia guardaba el valor antiguo).
+  const VIEW_KEYS = ['stratBase', 'period', 'showInvested', 'showPrice', 'showTotal', 'showNominal'];
+  const applyState = next => { const keep = Object.fromEntries(VIEW_KEYS.map(k => [k, state[k]])); Object.assign(state, structuredClone(next), keep); };
   const factor = () => (state.period === 'year' ? 12 : 1);
   const rateOf = f => data.cagr(f, state.histYears);
   // Datos del riesgo: todo el histórico disponible (mín. 20 años, para que una ventana corta no oculte las grandes caídas) e inflación de los últimos 30 años
@@ -77,7 +80,7 @@
 
   function buildInputs() {
     config.SECTIONS.forEach(sec => {
-      const card = h('div', { class: 'card' }, h('h2', {}, sec.title), ...sec.fields.map(buildField));
+      const card = h('div', { class: 'card sec-' + sec.id }, h('h2', {}, sec.title), sec.note ? h('p', { class: 'note' }, sec.note) : null, ...sec.fields.map(buildField));
       if (sec.custom === 'funds') card.append(buildFunds());
       $('#col-' + sec.col).append(card);
     });
@@ -199,7 +202,8 @@
       const v = rule?.pctOfNet ? (state.net > 0 ? (valueOf(key) / state.net) * 100 : NaN) : valueOf(key);
       const hit = !rule || !Number.isFinite(v) ? null : out(rule.bad, v) ? 'bad' : out(rule.good, v) ? 'good' : null;
       el.classList.toggle('is-bad', hit === 'bad'); el.classList.toggle('is-good', hit === 'good');
-      el.title = hit === 'bad' ? 'Valor extremo: muy pesimista' : hit === 'good' ? 'Valor extremo: demasiado optimista' : '';
+      const of = rule?.pctOfNet && Number.isFinite(v) ? ` (${Math.round(v)} % de tu sueldo neto actual, en € de hoy)` : '';
+      el.title = hit === 'bad' ? 'Valor extremo: muy pesimista' + of : hit === 'good' ? 'Valor extremo: demasiado optimista' + of : '';
     });
   }
 
@@ -216,10 +220,14 @@
 
   function renderStrategies() {
     $$('#strat-base button').forEach(b => b.classList.toggle('on', b.dataset.sb === state.stratBase));
+    const a = config.AVERAGE_PROFILE;
+    $('#strat-note').textContent = state.stratBase === 'avg'
+      ? `Calculadas con un perfil de salario medio (${eur.format(a.net)}/mes, ${a.workYears} años trabajando y ${a.retireYears} de jubilación); se mantienen tus fondos, inflación y comisiones.`
+      : 'Calculadas con los datos que has introducido (tu sueldo, gastos, ahorro inicial y años).';
     const start = base || state, source = state.stratBase === 'avg' ? finance.averageProfile(start) : start;
     $('#strategies').replaceChildren(...finance.strategies(source, rateOf, inputsOf).map(st =>
       h('button', { type: 'button', class: 'strategy' + (st.id === active ? ' active' : ''), disabled: st.unavailable ? '' : null,
-        onclick: () => { Object.assign(state, structuredClone(st.state)); active = st.id; refresh(false); } },
+        onclick: () => { applyState(st.state); active = st.id; refresh(false); } },
         h('b', {}, st.title), h('p', {}, st.unavailable ? 'No es alcanzable con tus datos actuales.' : st.desc),
         st.unavailable ? null : h('div', { class: 'tags' },
           h('span', {}, `Trabajas ${st.state.workYears} años`), h('span', {}, `Capital ${eur.format(st.res.capital)}`),
@@ -235,7 +243,7 @@
     };
     $('#scenarios').replaceChildren(...scenarios.map(sc => h('li', {},
       h('div', { class: 'sc-head' }, h('b', {}, sc.name),
-        h('button', { type: 'button', onclick: () => { Object.assign(state, structuredClone(sc.state)); refresh(); } }, 'Cargar'),
+        h('button', { type: 'button', onclick: () => { const keep = state.stratBase; Object.assign(state, structuredClone(sc.state)); state.stratBase = keep; refresh(); } }, 'Cargar'),
         h('button', { type: 'button', title: 'Guarda aquí los datos actuales', onclick: () => { sc.state = structuredClone(state); save(); renderScenarios(); } }, 'Actualizar'),
         h('button', { type: 'button', class: 'del', onclick: () => { scenarios = scenarios.filter(x => x.id !== sc.id); save(); renderScenarios(); } }, '✕')),
       h('small', {}, summary(sc)))));
@@ -243,8 +251,8 @@
 
   function init() {
     buildInputs();
-    [['avg', `Salario medio (${eur.format(config.AVERAGE_PROFILE.net)})`], ['mine', 'Mis datos']].forEach(([v, label]) =>
-      $('#strat-base').append(h('button', { type: 'button', 'data-sb': v, onclick: () => { state.stratBase = v; refresh(false); } }, label)));
+    [['avg', `Salario medio (${eur.format(config.AVERAGE_PROFILE.net)})`, 'Estrategias calculadas con un perfil estándar de salario medio'], ['mine', 'Mis datos', 'Estrategias calculadas con lo que has introducido tú']].forEach(([v, label, tip]) =>
+      $('#strat-base').append(h('button', { type: 'button', 'data-sb': v, title: tip, onclick: () => { state.stratBase = v; refresh(false); } }, label)));
     const head = $('.top'), syncHead = () => document.documentElement.style.setProperty('--head-h', head.offsetHeight + 'px');
     new ResizeObserver(syncHead).observe(head); syncHead();
     chart.init($('#chart'), $('#tip'));

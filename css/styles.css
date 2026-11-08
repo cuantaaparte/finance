@@ -22,6 +22,10 @@ h1{font-size:1.05rem;margin:0}h2{font-size:.95rem;margin:0 0 .6rem;color:var(--a
 .zone{position:sticky;top:var(--head-h,0px);z-index:6;background:var(--bg);padding:.4rem 0;display:flex;flex-direction:column;gap:.4rem}
 .col{display:flex;flex-direction:column;gap:.75rem}
 .card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:.75rem}
+/* Marcos de color de las cajas de datos (columnas izquierda y central). "Inversión" hace de puente: degradado de Ingresos y gastos (arriba) a Plan de inversión (abajo). */
+.sec-income{--frame:#38bdf8}.sec-plan{--frame:#a78bfa}.sec-retire{--frame:#f472b6}.sec-funds{--frame:#fbbf24}
+.sec-income,.sec-plan,.sec-retire,.sec-funds{border:2px solid var(--frame);box-shadow:0 0 14px -7px var(--frame)}
+.sec-invest{border:2px solid transparent;background:linear-gradient(var(--card),var(--card)) padding-box,linear-gradient(to bottom,#38bdf8,#a78bfa) border-box;box-shadow:0 0 14px -7px #7c9cff}
 .kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.4rem}
 .kpi{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:.35rem .55rem;min-width:0}
 .kpi small{color:var(--muted);display:block;font-size:.62rem;line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
