@@ -41,6 +41,7 @@
     alloc: { VT: 100 }, prov: {},
     retLinked: true, retNeeds: 900, retLeisure: 270,
     showInvested: true, showPrice: true, showTotal: true, showNominal: false,
+    showDividends: true, // ver la rentabilidad de cada fondo con dividendos (solo cambia lo que se muestra; la simulación ya los incluye)
     stratBase: 'avg', // punto de partida de las estrategias: 'avg' (salario medio) | 'mine' (tus datos)
   };
 

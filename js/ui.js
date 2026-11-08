@@ -20,7 +20,7 @@
   let scenarios = storage.get(config.STORAGE.scenarios, []);
   let raf = 0;
   // Ajustes de VISTA que una estrategia no debe pisar (antes, al aplicar una, volvía a "Salario medio" porque la copia guardaba el valor antiguo).
-  const VIEW_KEYS = ['stratBase', 'period', 'showInvested', 'showPrice', 'showTotal', 'showNominal'];
+  const VIEW_KEYS = ['stratBase', 'period', 'showInvested', 'showPrice', 'showTotal', 'showNominal', 'showDividends'];
   const applyState = next => { const keep = Object.fromEntries(VIEW_KEYS.map(k => [k, state[k]])); Object.assign(state, structuredClone(next), keep); };
   const factor = () => (state.period === 'year' ? 12 : 1);
   const clamp = (x, a, b) => Math.min(Math.max(x, a), b);
@@ -79,6 +79,8 @@
 
   function buildFunds() {
     const box = h('div', { id: 'funds' });
+    box.append(h('label', { class: 'switch fswitch', title: 'Muestra la rentabilidad de cada fondo con el dividendo que reparte (bruto). La simulación siempre incluye los dividendos, tras impuestos.' },
+      h('input', { type: 'checkbox', 'data-key': 'showDividends' }), h('i'), h('span', {}, 'Ver dividendos')));
     box.append(h('div', { class: 'tools' }, h('small', { id: 'ter-info' }),
       h('button', { type: 'button', onclick: () => { config.FUNDS.forEach(f => { state.prov[f.id] = finance.cheapest(f).id; }); refresh(); } }, 'Gestor más barato')));
     box.append(h('p', { class: 'fnote', id: 'funds-note' }));
@@ -121,7 +123,7 @@
     else if (key === 'retIncome') setRetIncome(v / factor());
     else if (MONEY.has(key)) { state[key] = v / factor(); flag(key); }
     else state[key] = v;
-    refresh();
+    refresh(key !== 'showDividends'); // es solo de vista: no debe reiniciar la base de las estrategias
   }
   /** Cambia el periodo de histórico. Las casillas solo aceptan años de 4 cifras dentro del rango mientras escribes; al salir (commit) se ajusta. */
   function onHist(which, el, commit) {
@@ -222,17 +224,21 @@
 
   function renderFunds() {
     const infl = String(round(state.inflation, 2)).replace('.', ',');
-    $('#funds-note').textContent = `Cifra de cada fondo: rentabilidad anual media del índice en el periodo elegido, en € nominales y sin dividendos. En la simulación se le resta a cada fondo la inflación que has elegido (${infl} %), además del TER y la comisión del bróker, y se le suma su dividendo.`;
+    const divOn = state.showDividends !== false, tax = Math.round(config.DIV_TAX * 100);
+    $('#funds-note').textContent = divOn
+      ? `Cifra de cada fondo: rentabilidad anual media del índice en el periodo elegido, en € nominales y con dividendos (subida del precio más el dividendo bruto del fondo). En la simulación se le resta a cada fondo la inflación que has elegido (${infl} %), además del TER y la comisión del bróker; el dividendo se cuenta una sola vez, después de impuestos (${tax} %).`
+      : `Cifra de cada fondo: rentabilidad anual media del índice en el periodo elegido, en € nominales y sin dividendos. En la simulación se le resta a cada fondo la inflación que has elegido (${infl} %), además del TER y la comisión del bróker, y se le suma su dividendo.`;
     $$('.fund').forEach(row => {
       const f = config.FUNDS.find(x => x.id === row.dataset.fund), on = f.id in state.alloc, r = rateOf(f);
+      const dy = divOn ? f.yield / 100 : 0, shownRate = r.rate + dy; // con el switch activo se suma el dividendo (igual que hace la simulación)
       $('[data-fcheck]', row).checked = on;
       const sel = $('select', row);
       $$('option', sel).forEach((o, i) => { const p = f.providers[i]; o.textContent = `${p.name} · TER ${p.ter} %`; });
       sel.value = finance.providerOf(state, f).id; sel.disabled = !on;
       const w = $('[data-fw]', row); w.disabled = !on;
       if (document.activeElement !== w) w.value = on ? round(state.alloc[f.id]) : '';
-      const ret = $('.ret', row); ret.textContent = pct(r.rate); ret.classList.toggle('neg', r.rate < 0);
-      ret.title = r.live ? `Rentabilidad anual media del índice entre ${mLabel(r.startKey)} y ${mLabel(r.endKey)} (${fmtYears(r.span)}), sin dividendos ni inflación` : 'Estimación fija (sin datos reales en este periodo)';
+      const ret = $('.ret', row); ret.textContent = pct(shownRate); ret.classList.toggle('neg', shownRate < 0);
+      ret.title = r.live ? `Rentabilidad anual media del índice entre ${mLabel(r.startKey)} y ${mLabel(r.endKey)} (${fmtYears(r.span)}): precio ${pct(r.rate)}${divOn ? ` + dividendo bruto ${pct(dy)}` : ', sin dividendos'}; sin descontar inflación` : 'Estimación fija (sin datos reales en este periodo)';
       $('.ter', row).textContent = 'TER ' + String(finance.providerOf(state, f).ter).replace('.', ',') + ' %';
     });
     const t = sumAlloc(), el = $('#alloc-total');
