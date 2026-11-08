@@ -1,7 +1,7 @@
 /* Interfaz: genera formularios desde el esquema, enlaza eventos y pinta resultados. */
 (function (App) {
   'use strict';
-  const { config, storage, finance, data, chart } = App;
+  const { config, storage, finance, data, chart, scenarioCode } = App;
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
   const eur = new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 });
@@ -293,18 +293,73 @@
           h('span', {}, `Retiras ${eur.format(st.res.spend)}/mes`), h('span', { class: st.risk.color ? 'risk-' + st.risk.color : '' }, `Riesgo ${st.risk.level} (${st.risk.score}/100)`)))));
   }
 
-  function renderScenarios() {
-    const save = () => storage.set(config.STORAGE.scenarios, scenarios);
+  /* ---------- Mis supuestos: guardar, renombrar, exportar e importar ---------- */
+  let editingId = null, msgTimer = 0;
+  const saveScenarios = () => storage.set(config.STORAGE.scenarios, scenarios);
+  const nextId = () => Math.max(Date.now(), ...scenarios.map(s => s.id + 1));
+  const uniqueName = name => { const used = new Set(scenarios.map(s => s.name)); let n = name, i = 2; while (used.has(n)) n = `${name.slice(0, 34)} (${i++})`; return n; };
+  function say(text, kind = 'ok') {
+    const m = $('#sc-msg'); m.textContent = text; m.className = 'sc-msg ' + kind; m.hidden = !text;
+    clearTimeout(msgTimer); if (text && kind === 'ok') msgTimer = setTimeout(() => { m.hidden = true; }, 7000);
+  }
+
+  async function copyText(text) {
+    try { if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); return true; } } catch { /* se prueba el método antiguo */ }
+    try {
+      const ta = h('textarea', { readonly: '', style: 'position:fixed;top:0;left:0;opacity:0' }); ta.value = text;
+      document.body.append(ta); ta.select(); ta.setSelectionRange(0, text.length);
+      const ok = document.execCommand('copy'); ta.remove(); return ok;
+    } catch { return false; }
+  }
+  async function exportScenario(sc) {
+    const code = scenarioCode.encode(sc);
+    if (await copyText(code)) say(`Código de «${sc.name}» copiado. Pégalo donde quieras guardarlo o enviarlo.`);
+    else { say('No se pudo copiar automáticamente: copia el código del cuadro que se abre.', 'err'); window.prompt('Copia este código (Ctrl+C):', code); }
+  }
+  function importCode(text) {
+    try {
+      const { name, state: st } = scenarioCode.decode(text);
+      const sc = { id: nextId(), name: uniqueName(name), state: st };
+      scenarios.push(sc); saveScenarios();
+      $('#sc-code').value = ''; $('#sc-io').hidden = true;
+      renderScenarios(true); say(`Supuesto «${sc.name}» importado. Pulsa «Cargar» para usarlo.`);
+    } catch (e) { say(e.message, 'err'); }
+  }
+
+  function startRename(sc) {
+    editingId = sc.id; renderScenarios(true);
+    const input = $('.sc-name'); if (input) { input.focus(); input.select(); }
+  }
+  function finishRename(sc, value) {
+    if (editingId !== sc.id) return; // ya terminado (Enter/Escape): el blur posterior no hace nada
+    editingId = null;
+    const name = value.replace(/\s+/g, ' ').trim().slice(0, 40);
+    if (name) sc.name = name;
+    saveScenarios(); renderScenarios(true);
+  }
+
+  function renderScenarios(force = false) {
+    if (editingId !== null && !force) return; // no pisar el campo mientras se escribe el nombre
     const summary = sc => {
       const s = sc.state, m = s.period === 'year' ? 12 : 1, u = s.period === 'year' ? '/año' : '/mes';
       return `Neto ${eur.format(s.net * m)}${u} · invierte ${eur.format(s.invest * m)}${u} · inicial ${eur.format(s.initial)} · ${s.workYears} años · inflación ${s.inflation} % · histórico ${s.histFrom || s.histTo ? `${s.histFrom ?? '…'}–${s.histTo ?? 'hoy'}` : 'por defecto'} · bróker ${s.brokerFee} % · `
         + Object.entries(s.alloc).map(([id, w]) => `${id} ${round(w, 1)} %`).join(', ');
     };
+    const nameCell = sc => {
+      if (editingId !== sc.id) return h('b', { title: 'Doble clic para renombrar', ondblclick: () => startRename(sc) }, sc.name);
+      const input = h('input', { type: 'text', class: 'sc-name', maxlength: 40, value: sc.name, 'aria-label': 'Nuevo nombre del supuesto',
+        onkeydown: e => { if (e.key === 'Enter') finishRename(sc, input.value); else if (e.key === 'Escape') { editingId = null; renderScenarios(true); } },
+        onblur: () => finishRename(sc, input.value) });
+      return input;
+    };
     $('#scenarios').replaceChildren(...scenarios.map(sc => h('li', {},
-      h('div', { class: 'sc-head' }, h('b', {}, sc.name),
-        h('button', { type: 'button', onclick: () => { const keep = state.stratBase; Object.assign(state, structuredClone(sc.state)); state.stratBase = keep; refresh(); } }, 'Cargar'),
-        h('button', { type: 'button', title: 'Guarda aquí los datos actuales', onclick: () => { sc.state = structuredClone(state); save(); renderScenarios(); } }, 'Actualizar'),
-        h('button', { type: 'button', class: 'del', onclick: () => { scenarios = scenarios.filter(x => x.id !== sc.id); save(); renderScenarios(); } }, '✕')),
+      h('div', { class: 'sc-head' }, nameCell(sc),
+        h('div', { class: 'sc-btns' },
+          h('button', { type: 'button', onclick: () => { const keep = state.stratBase; Object.assign(state, structuredClone(sc.state)); state.stratBase = keep; refresh(); } }, 'Cargar'),
+          h('button', { type: 'button', title: 'Guarda aquí los datos actuales', onclick: () => { sc.state = structuredClone(state); saveScenarios(); renderScenarios(true); } }, 'Actualizar'),
+          h('button', { type: 'button', title: 'Cambiar el nombre', onclick: () => startRename(sc) }, 'Renombrar'),
+          h('button', { type: 'button', title: 'Copia al portapapeles un código con todos los datos de este supuesto', onclick: () => exportScenario(sc) }, 'Exportar'),
+          h('button', { type: 'button', class: 'del', title: 'Borrar', onclick: () => { scenarios = scenarios.filter(x => x.id !== sc.id); saveScenarios(); renderScenarios(true); } }, '✕'))),
       h('small', {}, summary(sc)))));
   }
 
@@ -322,11 +377,20 @@
     // Si dejas un número vacío y sales del campo, se restaura el valor real (el estado no cambia mientras está vacío).
     document.addEventListener('focusout', e => { if (e.target.matches?.('input[type=number]') && e.target.value.trim() === '') refresh(false); });
     $('#data-status').addEventListener('click', async () => { $('#data-status').textContent = 'Conectando…'; await data.loadAll(true); refresh(false); });
+    // Importar un supuesto: cuadro donde pegar el código (o botón que lo lee del portapapeles)
+    $('#sc-import-btn').addEventListener('click', () => { const io = $('#sc-io'); io.hidden = !io.hidden; say(''); if (!io.hidden) $('#sc-code').focus(); });
+    $('#sc-close').addEventListener('click', () => { $('#sc-io').hidden = true; say(''); });
+    $('#sc-do-import').addEventListener('click', () => importCode($('#sc-code').value));
+    $('#sc-code').addEventListener('paste', () => setTimeout(() => importCode($('#sc-code').value), 0)); // al pegar se importa directamente
+    $('#sc-paste').addEventListener('click', async () => {
+      try { const text = await navigator.clipboard.readText(); $('#sc-code').value = text; importCode(text); }
+      catch { say('Tu navegador no deja leer el portapapeles desde aquí: pega el código en el cuadro (Ctrl+V o mantén pulsado).', 'err'); $('#sc-code').focus(); }
+    });
     $('#save-form').addEventListener('submit', e => {
       e.preventDefault();
       const input = $('#scenario-name');
-      scenarios.push({ id: Date.now(), name: input.value.trim() || `Supuesto ${scenarios.length + 1}`, state: structuredClone(state) });
-      storage.set(config.STORAGE.scenarios, scenarios); input.value = ''; renderScenarios();
+      scenarios.push({ id: nextId(), name: uniqueName(input.value.trim() || `Supuesto ${scenarios.length + 1}`), state: structuredClone(state) });
+      saveScenarios(); input.value = ''; renderScenarios(true);
     });
     refresh();
   }

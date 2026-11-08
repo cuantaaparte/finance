@@ -7,17 +7,18 @@
   <title>Simulador de fondos indexados</title>
   <!-- Emoji como icono de la pestaña -->
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%93%88%3C/text%3E%3C/svg%3E">
-  <link rel="stylesheet" href="css/styles.css?v=2026-11-08.2">
+  <link rel="stylesheet" href="css/styles.css?v=2026-11-08.3">
   <!-- Scripts clásicos (no módulos) para que funcione con doble clic (file://). El orden importa. -->
-  <script defer src="js/config.js?v=2026-11-08.2"></script>
-  <script defer src="js/storage.js?v=2026-11-08.2"></script>
+  <script defer src="js/config.js?v=2026-11-08.3"></script>
+  <script defer src="js/storage.js?v=2026-11-08.3"></script>
   <script defer src="data/ters.js"></script>
   <script defer src="data/market-data.js"></script>
-  <script defer src="js/dataService.js?v=2026-11-08.2"></script>
-  <script defer src="js/finance.js?v=2026-11-08.2"></script>
-  <script defer src="js/chart.js?v=2026-11-08.2"></script>
-  <script defer src="js/ui.js?v=2026-11-08.2"></script>
-  <script defer src="js/main.js?v=2026-11-08.2"></script>
+  <script defer src="js/dataService.js?v=2026-11-08.3"></script>
+  <script defer src="js/finance.js?v=2026-11-08.3"></script>
+  <script defer src="js/scenarioCode.js?v=2026-11-08.3"></script>
+  <script defer src="js/chart.js?v=2026-11-08.3"></script>
+  <script defer src="js/ui.js?v=2026-11-08.3"></script>
+  <script defer src="js/main.js?v=2026-11-08.3"></script>
 </head>
 <body>
   <header class="top">
@@ -60,7 +61,17 @@
         <div id="strategies" class="strategies"></div>
       </section>
       <section id="scen-card" class="card">
-        <h2>Mis supuestos</h2>
+        <div class="strat-head"><h2>Mis supuestos</h2>
+          <button type="button" id="sc-import-btn" class="btn ghost" title="Pega un código de supuesto copiado antes (tuyo o de un amigo)">Importar</button></div>
+        <div id="sc-io" class="sc-io" hidden>
+          <textarea id="sc-code" rows="3" spellcheck="false" autocomplete="off" placeholder="Pega aquí el código del supuesto…"></textarea>
+          <div class="sc-io-row">
+            <button type="button" id="sc-paste">Pegar del portapapeles</button>
+            <button type="button" id="sc-do-import">Importar</button>
+            <button type="button" id="sc-close" class="ghost">Cerrar</button>
+          </div>
+        </div>
+        <p id="sc-msg" class="sc-msg" role="status" hidden></p>
         <form id="save-form" class="save-form">
           <input id="scenario-name" type="text" placeholder="Nombre del supuesto" maxlength="40">
           <button type="submit">Guardar</button>
