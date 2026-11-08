@@ -51,6 +51,8 @@ input.pct{width:3.6rem}
 input:disabled{opacity:.5}
 input[type=range]{accent-color:var(--accent)}
 .suf{color:var(--muted);font-size:.75rem;min-width:1em}
+/* Casillas más grandes: usan rem, así crecen con el tamaño de la interfaz en pantallas grandes */
+input[type=checkbox]{width:1.2rem;height:1.2rem;margin:0;flex:none;accent-color:var(--accent);cursor:pointer}
 .check{display:flex;align-items:center;gap:.45rem;margin:.1rem 0 .55rem;font-size:.82rem;cursor:pointer}
 .fund{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto auto;align-items:center;gap:.1rem .4rem;padding:.35rem 0;border-top:1px solid var(--line)}
 .fund .fmain{display:flex;flex-direction:column;min-width:0;gap:.15rem}
@@ -84,6 +86,15 @@ input.yr{width:4.1rem}
 /* Valores extremos: rojo = pesimista, verde = demasiado optimista */
 @keyframes glow-bad{from{box-shadow:0 0 3px rgba(248,113,113,.4)}to{box-shadow:0 0 12px rgba(248,113,113,.95)}}
 @keyframes glow-good{from{box-shadow:0 0 3px rgba(52,211,153,.4)}to{box-shadow:0 0 12px rgba(52,211,153,.95)}}
+/* Aviso suave (naranja): faltan datos en el periodo elegido. Brillo más tenue que el rojo/verde */
+@keyframes glow-warn{from{box-shadow:0 0 2px rgba(251,146,60,.2)}to{box-shadow:0 0 6px rgba(251,146,60,.5)}}
+.field.is-warn>label{color:#fb923c}
+.field.is-warn .dual{filter:drop-shadow(0 0 3px rgba(251,146,60,.55))}
+.field.is-warn .dual .fill{background:#fb923c}
+.field.is-warn .dual input[type=range]::-webkit-slider-thumb{background:#fb923c}
+.field.is-warn .dual input[type=range]::-moz-range-thumb{background:#fb923c}
+.field.is-warn input[type=number]{border-color:#fb923c;animation:glow-warn 1.8s ease-in-out infinite alternate}
+.hist-warn{color:#fb923c;font-size:.72rem;line-height:1.35;margin:.15rem 0 .5rem}
 .field.is-bad>label{color:var(--bad)}.field.is-good>label{color:var(--ok)}
 .field.is-bad input[type=range]{accent-color:var(--bad);filter:drop-shadow(0 0 5px var(--bad))}
 .field.is-good input[type=range]{accent-color:var(--ok);filter:drop-shadow(0 0 5px var(--ok))}

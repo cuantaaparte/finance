@@ -59,6 +59,7 @@
       h('label', {}, f.label, h('em', { id: 'hist-len' })),
       h('div', { class: 'pair' }, h('div', { class: 'dual' }, h('div', { class: 'track' }), h('div', { class: 'fill' }), rng('lo'), rng('hi')),
         num('from'), h('span', { class: 'suf' }, '–'), num('to')),
+      h('div', { class: 'hist-warn', id: 'hist-warn', hidden: '' }),
       h('button', { type: 'button', class: 'link', id: 'hist-reset', hidden: '', onclick: () => { state.histFrom = state.histTo = null; refresh(); } },
         '↺ Volver al periodo por defecto (desde que hay datos de todos los índices hasta hoy)'));
   }
@@ -88,8 +89,7 @@
       h('div', { class: 'rcell' }, h('span', { class: 'ret' }), h('small', { class: 'ter' })),
       h('input', { type: 'number', min: 0, max: 100, step: 'any', 'data-fw': f.id }),
       h('span', { class: 'suf' }, '%'))));
-    box.append(h('div', { class: 'total-row' }, h('div', { class: 'total', id: 'alloc-total' }), h('div', { class: 'total', id: 'risk-total' })),
-      h('div', { class: 'total warn', id: 'hist-warn', hidden: '' }));
+    box.append(h('div', { class: 'total-row' }, h('div', { class: 'total', id: 'alloc-total' }), h('div', { class: 'total', id: 'risk-total' })));
     box.addEventListener('input', e => {
       const c = e.target.dataset.fcheck, w = e.target.dataset.fw, p = e.target.dataset.fprov;
       if (c) {
@@ -195,6 +195,14 @@
     badge.classList.toggle('live', st.mode !== 'none');
   }
 
+  /** Aviso (vacío = todo bien) cuando a algún fondo elegido le faltan datos en el periodo seleccionado. */
+  function histWarning() {
+    if (data.status().mode === 'none') return 'Sin datos reales: la rentabilidad es una estimación fija y no cambia con los años.';
+    const selected = Object.keys(state.alloc).map(id => config.FUNDS.find(x => x.id === id)).filter(Boolean);
+    const partial = selected.map(f => [f, rateOf(f)]).filter(([, r]) => !r.live || r.lateBy > 3);
+    return partial.length ? `Sin histórico completo en este periodo: ${partial.map(([f, r]) => r.live ? `${f.name} (datos desde ${Math.floor(r.startKey / 12)})` : `${f.name} (sin datos: estimación fija)`).join(', ')}. Se usa el máximo disponible.` : '';
+  }
+
   function renderHist(force = false) {
     const { from, to, b, years } = histRange(), q = w => $(`[data-hist="${w}"]`), span = b.max - b.min || 1;
     ['lo', 'hi', 'from', 'to'].forEach(w => { q(w).min = b.min; q(w).max = b.max; });
@@ -206,6 +214,9 @@
     const len = $('#hist-len'); len.textContent = '= ' + fmtYears(years);
     len.title = `Del cierre de ${mLabel((from - 1) * 12 + 11)} al de ${mLabel(to >= b.max ? b.lastKey : to * 12 + 11)}`;
     $('#hist-reset').hidden = state.histFrom == null && state.histTo == null;
+    const text = histWarning(), warn = $('#hist-warn');
+    warn.textContent = text; warn.hidden = !text;
+    $('.field[data-field="histRange"]').classList.toggle('is-warn', !!text); // naranja suave: faltan datos (no es grave)
   }
 
   function renderFunds() {
@@ -226,12 +237,6 @@
     const t = sumAlloc(), el = $('#alloc-total');
     el.textContent = `Reparto: ${round(t, 1)} %` + (Math.abs(t - 100) > 0.1 ? ' (se normaliza a 100 %)' : '');
     el.classList.toggle('warn', Math.abs(t - 100) > 0.1);
-    const warn = $('#hist-warn'), selected = Object.keys(state.alloc).map(id => config.FUNDS.find(x => x.id === id)).filter(Boolean);
-    const partial = selected.map(f => [f, rateOf(f)]).filter(([, r]) => !r.live || r.lateBy > 3);
-    warn.textContent = data.status().mode === 'none'
-      ? 'Sin datos reales: la rentabilidad es una estimación fija y no cambia con los años.'
-      : partial.length ? `Sin histórico completo en este periodo: ${partial.map(([f, r]) => r.live ? `${f.name} (datos desde ${Math.floor(r.startKey / 12)})` : `${f.name} (sin datos: estimación fija)`).join(', ')}. Se usa el máximo disponible.` : '';
-    warn.hidden = !warn.textContent;
     $('#ter-info').textContent = data.terDate() ? `TER actualizados: ${data.terDate()}` : 'TER de referencia';
   }
 
