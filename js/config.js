@@ -6,7 +6,8 @@
   // fallback = rentabilidad anual si no hay conexión. Los TER son ORIENTATIVOS: se sobrescriben con data/ters.js.
   const FUNDS = [
     { id: 'VT', name: 'Global All-World (FTSE)', vol: 15, yield: 1.9, fallback: 0.080, providers: [
-      P('vt-vanguard', 'Vanguard FTSE All-World', 0.19), P('vt-invesco', 'Invesco FTSE All-World', 0.15)] },
+      P('vt-vanguard', 'Vanguard FTSE All-World', 0.14), P('vt-invesco', 'Invesco FTSE All-World', 0.15),
+      P('vt-vanguard-allcap', 'Vanguard FTSE Global All-Cap', 0.07)] }, // lanzado en ago-2026; mismo índice que el VT estadounidense (todas las capitalizaciones)
     { id: 'ACWI', name: 'Global All-World (MSCI ACWI)', vol: 15, yield: 1.8, fallback: 0.080, providers: [
       P('acwi-ishares', 'iShares MSCI ACWI', 0.20), P('acwi-spdr', 'SPDR MSCI ACWI', 0.12)] },
     { id: 'URTH', name: 'MSCI World', vol: 14, yield: 1.8, fallback: 0.085, providers: [
@@ -24,12 +25,12 @@
     { id: 'EWJ', name: 'Japón', vol: 17, yield: 2.0, fallback: 0.050, providers: [
       P('ewj-ishares', 'iShares Core MSCI Japan IMI', 0.15), P('ewj-amundi', 'Amundi MSCI Japan', 0.12)] },
     { id: 'VWO', name: 'Emergentes (FTSE)', vol: 19, yield: 2.8, fallback: 0.040, providers: [
-      P('vwo-vanguard', 'Vanguard FTSE Emerging Markets', 0.22)] },
+      P('vwo-vanguard', 'Vanguard FTSE Emerging Markets', 0.17)] },
     { id: 'EEM', name: 'Emergentes (MSCI EM)', vol: 19, yield: 2.7, fallback: 0.040, providers: [
       P('eem-ishares', 'iShares Core MSCI EM IMI', 0.18), P('eem-amundi', 'Amundi MSCI Emerging Markets', 0.14),
       P('eem-fidelity', 'Fidelity Index Emerging Markets', 0.20), P('eem-xtrackers', 'Xtrackers MSCI Emerging Markets', 0.18)] },
     { id: 'AGG', name: 'Bonos agregados (RF)', vol: 5, yield: 3.2, fallback: 0.020, providers: [
-      P('agg-vanguard', 'Vanguard Global Aggregate Bond', 0.10), P('agg-ishares', 'iShares Global Aggregate Bond', 0.10)] },
+      P('agg-vanguard', 'Vanguard Global Aggregate Bond', 0.08), P('agg-ishares', 'iShares Global Aggregate Bond', 0.10)] },
   ];
 
   const DEFAULT_STATE = {
