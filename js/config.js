@@ -9,7 +9,8 @@
       P('vt-vanguard', 'Vanguard FTSE All-World', 0.14), P('vt-invesco', 'Invesco FTSE All-World', 0.15),
       P('vt-vanguard-allcap', 'Vanguard FTSE Global All-Cap', 0.07)] }, // lanzado en ago-2026; mismo índice que el VT estadounidense (todas las capitalizaciones)
     { id: 'ACWI', name: 'Global All-World (MSCI ACWI)', vol: 15, yield: 1.8, fallback: 0.080, providers: [
-      P('acwi-ishares', 'iShares MSCI ACWI', 0.20), P('acwi-spdr', 'SPDR MSCI ACWI', 0.12)] },
+      P('acwi-ishares', 'iShares MSCI ACWI', 0.20), P('acwi-spdr', 'SPDR MSCI ACWI', 0.12),
+      P('acwi-lg-imi', 'L&G MSCI ACWI IMI', 0.16)] }, // sigue el MSCI ACWI IMI (incluye small caps); como referencia de precios se usa el ACWI, muy parecido
     { id: 'URTH', name: 'MSCI World', vol: 14, yield: 1.8, fallback: 0.085, providers: [
       P('urth-ishares', 'iShares Core MSCI World', 0.20), P('urth-amundi', 'Amundi MSCI World', 0.12),
       P('urth-fidelity', 'Fidelity Index World', 0.12), P('urth-xtrackers', 'Xtrackers MSCI World', 0.19)] },
@@ -43,6 +44,7 @@
     retLinked: true, retNeeds: 900, retLeisure: 270,
     showInvested: true, showPrice: true, showTotal: true, showNominal: false,
     showDividends: true, // ver la rentabilidad de cada fondo con dividendos (solo cambia lo que se muestra; la simulación ya los incluye)
+    hideCosts: true,     // true: la cifra de cada fondo NO descuenta inflación ni TER; false: se muestra ya descontada (solo cambia lo que se muestra)
     stratBase: 'avg', // punto de partida de las estrategias: 'avg' (salario medio) | 'mine' (tus datos)
   };
 
