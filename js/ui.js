@@ -135,7 +135,7 @@
     if (key === 'periodYearly') state.period = v ? 'year' : 'month';
     else if (key in PCT) { state[PCT[key]] = (state.net * v) / 100; flag(PCT[key]); }
     else if (key in RET_PCT) setRetShare(key, v);
-    else if (key === 'retIncome') setRetIncome(state.retBasis === 'gross' ? taxes.netOf(taxes.resolve(state.tax), (v / factor()) * 12) / 12 : v / factor()); // en bruto: se convierte a neto con los impuestos
+    else if (key === 'retIncome') setRetIncome(state.retBasis === 'gross' ? taxes.netOf(taxes.resolve(state.tax), (v / factor()) * 12, lastRes?.q0 ?? 1) / 12 : v / factor()); // en bruto: se convierte a neto con los impuestos
     else if (MONEY.has(key)) { state[key] = v / factor(); flag(key); }
     else state[key] = v;
     refresh(key !== 'showDividends' && key !== 'hideCosts'); // son solo de vista: no deben reiniciar la base de las estrategias
@@ -172,7 +172,7 @@
   function shown(key) {
     if (key in PCT) return state.net ? (state[PCT[key]] / state.net) * 100 : 0;
     if (key in RET_PCT) return retIncome() > 0 ? (state[RET_PCT[key]] / retIncome()) * 100 : 0;
-    if (key === 'retIncome' && state.retBasis === 'gross') return finance.retGross(state) * factor();
+    if (key === 'retIncome' && state.retBasis === 'gross' && lastRes) return lastRes.spend * factor(); // bruto del primer año de jubilación
     return MONEY.has(key) ? valueOf(key) * factor() : state[key];
   }
 
@@ -187,6 +187,8 @@
 
   /* ---------- Pintado ---------- */
   function render() {
+    const port = finance.portfolio(state, rateOf), res = finance.simulate(state, port);
+    lastRes = res;
     $$('[data-key]').forEach(el => {
       const key = el.dataset.key;
       if (el.type === 'checkbox') el.checked = key === 'periodYearly' ? state.period === 'year' : !!state[key];
@@ -202,10 +204,9 @@
     renderHist();
     renderFunds();
     renderExtremes();
-    renderRetInfo();
+    renderRetInfo(res);
     $$('#ret-basis button').forEach(b => b.classList.toggle('on', b.dataset.rb === state.retBasis));
 
-    const port = finance.portfolio(state, rateOf), res = finance.simulate(state, port);
     chart.render(res, state);
     renderKpis(res);
     renderRisk(port, res);
@@ -322,7 +323,7 @@
         h('b', {}, st.title), h('p', {}, st.unavailable ? 'No es alcanzable con tus datos actuales.' : st.desc),
         st.unavailable ? null : h('div', { class: 'tags' },
           h('span', {}, `Trabajas ${st.state.workYears} años`), h('span', {}, `Capital ${eur.format(st.res.capital)}`),
-          h('span', { title: `Bruto que sale de las inversiones: ${eur.format(st.res.spend)}/mes` }, `Retiras ${eur.format(st.res.net)}/mes netos`), h('span', { class: st.risk.color ? 'risk-' + st.risk.color : '' }, `Riesgo ${st.risk.level} (${st.risk.score}/100)`)))));
+          h('span', { title: `Bruto que sale de las inversiones el primer año: ${eur.format(st.res.spend)}/mes` }, `Retiras ${eur.format(st.res.net)}/mes netos`), h('span', { class: st.risk.color ? 'risk-' + st.risk.color : '' }, `Riesgo ${st.risk.level} (${st.risk.score}/100)`)))));
   }
 
   /* ---------- Mis supuestos: guardar, renombrar, exportar e importar ---------- */
@@ -397,17 +398,18 @@
 
 
   /* ---------- Impuestos de la jubilación ---------- */
+  let lastRes = null; // última simulación: de aquí salen el bruto del primer año de jubilación y la parte que es ganancia
   const fmtMoney = (v, cur) => { try { return new Intl.NumberFormat('es-ES', { style: 'currency', currency: cur, maximumFractionDigits: 0 }).format(v); } catch { return Math.round(v) + ' ' + cur; } };
+  const curSym = cur => { try { return new Intl.NumberFormat('es-ES', { style: 'currency', currency: cur }).formatToParts(0).find(p => p.type === 'currency').value; } catch { return cur; } };
   const nomFactor = () => Math.pow(1 + state.inflation / 100, state.workYears); // inflación acumulada hasta jubilarte
 
-  /** Descripción bajo "Ingresos de la inversión": neto, bruto e impuestos de hoy, y lo que serían en euros sin ajustar a inflación. */
-  function renderRetInfo() {
-    const def = taxes.resolve(state.tax), net = retIncome() * 12, c = taxes.calc(def, taxes.grossOf(def, net)), m = factor(), f = nomFactor();
-    const per = state.period === 'year' ? '/año' : '/mes', v = x => eur.format((x / 12) * m) + per, n = x => eur.format((x / 12) * m * f) + per;
+  /** Descripción bajo "Ingresos de la inversión": neto, bruto e impuestos del primer año de jubilación, y lo mismo sin ajustar a inflación. */
+  function renderRetInfo(res) {
+    const def = taxes.resolve(state.tax), m = factor(), f = nomFactor(), per = state.period === 'year' ? '/año' : '/mes';
+    const v = x => eur.format(x * m) + per, n = x => eur.format(x * m * f) + per, rate = res.spend > 0 ? 1 - res.net / res.spend : 0;
     $('#ret-desc').replaceChildren(
-      h('div', {}, `Neto ${v(c.net)} · bruto ${v(c.gross)} · impuestos ${pct(c.rate)} (${def.label})`),
-      h('div', { title: 'Mismo importe sin descontar la inflación: lo que verías en tu cuenta el primer año de jubilación. Los tramos de impuestos también se suben con la inflación.' },
-        `Sin ajustar a inflación (año ${state.workYears}): neto ${n(c.net)} · bruto ${n(c.gross)}`));
+      h('div', { title: 'Primer año de jubilación. Los años siguientes cambia según cuánta ganancia haya en el capital.' }, `Neto ${v(res.net)} · bruto ${v(res.spend)} · impuestos ${pct(rate)} (${def.label})`),
+      h('div', { title: 'Mismo importe sin descontar la inflación: lo que verías en tu cuenta el primer año de jubilación.' }, `Sin ajustar a inflación (año ${state.workYears}): neto ${n(res.net)} · bruto ${n(res.spend)}`));
   }
 
   function openTax() { renderTax(); const d = $('#tax-dlg'); if (!d.open) d.showModal(); }
@@ -415,7 +417,7 @@
   function ensureCustom() {
     if (state.tax.country === 'CUSTOM' && state.tax.custom) return state.tax.custom;
     const d = taxes.resolve(state.tax);
-    state.tax.custom = { from: d.label + (d.year ? ' (' + d.year + ')' : ''), currency: d.currency, fx: d.fx, allowance: d.allowance, brackets: structuredClone(d.brackets), social: structuredClone(d.social) };
+    state.tax.custom = { from: d.label + (d.year ? ' (' + d.year + ')' : ''), currency: d.currency, fx: d.fx, on: d.on, inclusion: d.inclusion, allowance: d.allowance, brackets: structuredClone(d.brackets), social: structuredClone(d.social) };
     state.tax.country = 'CUSTOM';
     return state.tax.custom;
   }
@@ -427,11 +429,11 @@
   }
 
   function renderTax() {
-    const def = taxes.resolve(state.tax), cur = def.currency, country = def.custom ? null : taxes.countries().find(x => x.id === def.id);
+    const def = taxes.resolve(state.tax), cur = def.currency, sym = curSym(cur), country = def.custom ? null : taxes.countries().find(x => x.id === def.id);
     const infl = String(round(state.inflation, 2)).replace('.', ',');
     const sel = h('select', { id: 'tax-country', 'aria-label': 'País' }, ...taxes.countries().map(x => h('option', { value: x.id }, x.name)), h('option', { value: 'CUSTOM' }, '✏️ Personalizado'));
     sel.value = state.tax.country;
-    const scaleSel = country && country.scales.length > 1 ? h('select', { id: 'tax-scale', 'aria-label': 'Tipo de renta' }, ...country.scales.map(s => h('option', { value: s.id }, s.name))) : null;
+    const scaleSel = country && country.scales.length > 1 ? h('select', { id: 'tax-scale', 'aria-label': 'Tributa como' }, ...country.scales.map(s => h('option', { value: s.id }, s.name))) : null;
     if (scaleSel) scaleSel.value = def.scaleId;
     const last = def.brackets.length - 1;
     const rows = def.brackets.map((b, i) => h('tr', {},
@@ -444,43 +446,54 @@
       h('input', { type: 'text', 'data-t': 'soc-name', 'data-i': i, value: x.name, maxlength: 40, 'aria-label': 'Nombre' }),
       h('input', { type: 'number', class: 'rate', min: 0, max: 99, step: 'any', 'data-t': 'soc-rate', 'data-i': i, value: round(x.rate), 'aria-label': 'Porcentaje' }), h('span', { class: 'suf' }, '%'),
       h('button', { type: 'button', class: 'del-x', 'data-t': 'soc-del', 'data-i': i, title: 'Quitar' }, '✕')));
-    const fxTxt = cur !== 'EUR' ? ` Tipo de cambio usado: ${String(round(def.fx, 4)).replace('.', ',')} ${cur} por €${taxes.fxDate() && !def.custom ? ' (actualizado ' + new Date(taxes.fxDate()).toLocaleDateString('es-ES') + ')' : ''}.` : '';
+    const onSel = h('select', { 'data-t': 'on', 'aria-label': 'Qué tributa' }, h('option', { value: 'gain' }, 'Solo la ganancia'), h('option', { value: 'all' }, 'Toda la retirada'));
+    onSel.value = def.on;
+    const fxTxt = cur !== 'EUR' ? ` Tipo de cambio: ${String(round(def.fx, 4)).replace('.', ',')} ${cur} por €${taxes.fxDate() && !def.custom ? ' (' + new Date(taxes.fxDate()).toLocaleDateString('es-ES') + ')' : ''}.` : '';
     $('#tax-body').replaceChildren(
       h('div', { class: 'tax-row' },
-        h('label', {}, 'País', sel), scaleSel ? h('label', { id: 'tax-scale-wrap' }, 'Tipo de renta', scaleSel) : null),
+        h('label', {}, 'País', sel), scaleSel ? h('label', { id: 'tax-scale-wrap' }, 'Tributa como', scaleSel) : null),
       h('p', { class: 'note', id: 'tax-from', hidden: '' }),
-      h('p', { class: 'note' }, `Importes en € de hoy. Los tramos son los de hoy y se supone que se ajustan a la inflación cada año (${infl} %): por eso, en la simulación (que va en € de hoy), siempre valen lo mismo. La columna «nominal» muestra cuánto valdría cada límite sin ajustar a inflación el primer año de jubilación (año ${state.workYears}).`),
-      h('p', { class: 'note' }, 'Se aplican a toda la retirada como si fuera renta. En la realidad, vender fondos suele tributar solo por la ganancia, así que es una estimación prudente (en la práctica pagarías algo menos).'),
+      h('p', { class: 'note' }, def.on === 'gain'
+        ? 'Solo paga impuestos la parte de lo que retiras que es ganancia; el resto es dinero que ya habías aportado. Se calcula con el coste medio de tus aportaciones.'
+        : 'Se aplican a toda la retirada, como si fuera un sueldo o una pensión.'),
+      h('p', { class: 'note' }, `Importes en € de hoy. Los tramos son los de hoy y se supone que se ajustan a la inflación cada año (${infl} %), por eso en la simulación siempre valen lo mismo. La columna «nominal» muestra cuánto valdría cada límite sin ajustar a inflación el primer año de jubilación (año ${state.workYears}).`),
       !def.custom && def.note ? h('p', { class: 'note' }, def.note + (def.approx ? ' (Valores aproximados.)' : '')) : null,
-      h('h3', { class: 'tax-h' }, `Tramos (${cur} al año)`),
+      h('h3', { class: 'tax-h' }, `Tramos (${sym} al año)`),
       h('div', { class: 'tbl-wrap' }, h('table', { class: 'tax-tbl' },
         h('thead', {}, h('tr', {}, h('th', {}, 'Base imponible hasta'), h('th', {}, 'Tipo'), h('th', {}, 'Pagas al año (€ de hoy)'), h('th', {}, `Límite nominal, año ${state.workYears}`), h('th', {}))),
         h('tbody', {}, ...rows))),
       h('div', { class: 'tax-row' },
         h('button', { type: 'button', class: 'btn ghost', 'data-t': 'add' }, '+ Añadir tramo'),
-        h('label', {}, `Mínimo exento (${cur}/año)`, h('input', { type: 'number', min: 0, step: 'any', 'data-t': 'allow', value: round(def.allowance) }))),
+        h('label', {}, `Mínimo exento (${sym}/año)`, h('input', { type: 'number', min: 0, step: 'any', 'data-t': 'allow', value: round(def.allowance) }))),
+      h('div', { class: 'tax-row' },
+        h('label', {}, 'Tributa', onSel),
+        h('label', {}, 'Parte de la base que tributa', h('input', { type: 'number', class: 'rate', min: 0, max: 100, step: 'any', 'data-t': 'incl', value: round((def.inclusion ?? 1) * 100) }), ' %')),
       h('h3', { class: 'tax-h' }, 'Seguridad social'),
-      social.length ? h('div', {}, ...social) : h('p', { class: 'note' }, 'No se aplica: las retiradas de inversiones no cotizan a la Seguridad Social en ninguno de los países de la lista. Si en tu caso sí (por ejemplo, cotizaciones sobre una pensión), añádela aquí.'),
+      social.length ? h('div', {}, ...social) : h('p', { class: 'note' }, 'No se aplica: vender fondos de inversión no cotiza a la Seguridad Social. Si en tu caso sí, añádela aquí.'),
       h('button', { type: 'button', class: 'btn ghost', 'data-t': 'soc-add' }, '+ Añadir cotización'),
-      h('h3', { class: 'tax-h' }, 'Resultado con tu plan'),
+      h('h3', { class: 'tax-h' }, 'Resultado con tu plan (primer año de jubilación)'),
       h('div', { class: 'tbl-wrap' }, h('table', { class: 'tax-tbl', id: 'tax-sum' })),
-      h('p', { class: 'note' }, (def.custom ? 'Tramos personalizados.' : `Datos de referencia ${def.year}${def.approx ? ' (aproximados)' : ''}.`) + ' No hay una API pública fiable de tramos fiscales: están en data/tax-data.js (edítalo cuando cambien).' + fxTxt));
+      h('p', { class: 'note' }, (def.custom ? 'Tramos personalizados.' : `Datos de referencia ${def.year}${def.approx ? ' (aproximados)' : ''}.`) + fxTxt));
     syncTaxHead();
     updateTaxPreview();
   }
 
   /** Rellena lo que depende del plan (lo que pagas por tramo y el resumen) sin tocar los campos que se están editando. */
   function updateTaxPreview() {
-    if (!$('#tax-sum')) return;
-    const def = taxes.resolve(state.tax), c = taxes.calc(def, taxes.grossOf(def, retIncome() * 12)), f = nomFactor();
+    if (!$('#tax-sum') || !lastRes) return;
+    const def = taxes.resolve(state.tax), f = nomFactor(), gross = lastRes.spend * 12, q = lastRes.q0, base = taxes.taxable(def, gross, q), c = taxes.calc(def, base);
     $$('#tax-body .t-paid').forEach(td => { td.textContent = eur.format(c.rows[td.dataset.i]?.tax ?? 0); });
     $$('#tax-body .t-nom').forEach(td => { const b = def.brackets[td.dataset.i]; td.textContent = b?.upTo == null ? '—' : fmtMoney(b.upTo * f, def.currency); });
     const line = (label, y, cls) => h('tr', { class: cls || null }, h('th', {}, label), h('td', { class: 'num' }, eur.format(y)), h('td', { class: 'num' }, eur.format(y / 12)), h('td', { class: 'num' }, eur.format((y / 12) * f)));
     $('#tax-sum').replaceChildren(
       h('thead', {}, h('tr', {}, h('th', {}, ''), h('th', {}, '€ de hoy / año'), h('th', {}, '€ de hoy / mes'), h('th', {}, `€ nominales / mes (año ${state.workYears})`))),
-      h('tbody', {}, line('Bruto retirado de las inversiones', c.gross), line('− Impuesto sobre la renta', c.income),
-        def.social.length ? line('− Seguridad social', c.social) : null, line('= Neto que cobras', c.net, 'tot')),
-      h('tfoot', {}, h('tr', {}, h('td', { colspan: 4, class: 'muted' }, `Tipo medio ${pct(c.rate)} · tipo marginal ${pct(c.marginal)}`))));
+      h('tbody', {},
+        line('Bruto retirado de las inversiones', gross),
+        def.on === 'gain' ? line(`   de los que ganancia (${pct(q)})`, base, 'sub') : null,
+        c.social > 0 || def.social.length ? line('− Seguridad social', c.social) : null,
+        line(c.social > 0 || def.social.length ? '− Impuesto sobre la renta' : '− Impuestos', c.income),
+        line('= Neto que cobras', gross - c.tax, 'tot')),
+      h('tfoot', {}, h('tr', {}, h('td', { colspan: 4, class: 'muted' }, `Tipo medio sobre lo retirado ${pct(gross > 0 ? c.tax / gross : 0)} · tipo marginal ${pct(c.marginal)}`))));
   }
 
   function initTax() {
@@ -491,6 +504,7 @@
       const el = e.target, t = el.dataset.t;
       if (el.id === 'tax-country') { if (el.value === 'CUSTOM') ensureCustom(); else { state.tax.country = el.value; state.tax.scale = null; } refresh(); renderTax(); }
       else if (el.id === 'tax-scale') { state.tax.scale = el.value; refresh(); renderTax(); }
+      else if (t === 'on') { ensureCustom().on = el.value === 'all' ? 'all' : 'gain'; refresh(); renderTax(); }
       else if (t === 'up' && state.tax.custom) { // al salir del campo se reordenan los tramos
         const c = state.tax.custom, before = JSON.stringify(c.brackets.map(b => b.upTo));
         c.brackets = taxes.normBrackets(c.brackets); refresh();
@@ -504,6 +518,7 @@
       if (t === 'up') { if (v > 0) c.brackets[i].upTo = v; }
       else if (t === 'rate') c.brackets[i].rate = clamp(v, 0, 99);
       else if (t === 'allow') c.allowance = Math.max(0, v);
+      else if (t === 'incl') c.inclusion = clamp(v, 0, 100) / 100;
       else if (t === 'soc-rate') c.social[i].rate = clamp(v, 0, 99);
       else if (t === 'soc-name') c.social[i].name = el.value.slice(0, 40);
       else return;

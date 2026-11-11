@@ -177,3 +177,5 @@ button.ghost{background:transparent;color:var(--text);border:1px solid var(--lin
 .del-x{background:transparent;color:var(--bad);border:1px solid var(--line);border-radius:7px;padding:.1rem .45rem;cursor:pointer;font:inherit}
 .muted{color:var(--muted)}
 #tax-body .note{margin:0 0 .5rem}
+.tax-tbl tr.sub th,.tax-tbl tr.sub td{color:var(--muted);font-weight:400;font-size:.72rem}
+.tax-row select{width:auto}

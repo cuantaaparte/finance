@@ -6,8 +6,6 @@
   const clamp = (x, a, b) => Math.min(Math.max(x, a), b);
   const cheapest = f => f.providers.reduce((a, b) => (b.ter < a.ter ? b : a));
   const providerOf = (s, f) => f.providers.find(p => p.id === s.prov?.[f.id]) || f.providers[0];
-  /** Retirada BRUTA mensual (€ de hoy) que hace falta para cobrar neto lo que pides tras impuestos. Los tramos se suponen ajustados a la inflación. */
-  const retGross = s => { const n = s.retNeeds + s.retLeisure; return n > 0 ? App.taxes.grossOf(App.taxes.resolve(s.tax), n * 12) / 12 : 0; };
 
   /** Mantiene coherentes sueldo/gastos/ocio/inversión (nunca superan el sueldo). */
   function normalize(s) {
@@ -45,20 +43,26 @@
   }
 
   function simulate(s, p, opts = {}) { // opts.crash: caída (0-1) del capital justo al jubilarte
-    const infl = s.inflation / 100;
+    const infl = s.inflation / 100, infM = Math.pow(1 + infl, 1 / 12); // inflación mensual
     const m = r => Math.pow((1 + r) / (1 + infl), 1 / 12) - 1; // tasa mensual real
-    const mP = m(p.price), mT = m(p.total);
-    const net = s.retNeeds + s.retLeisure, spend = retGross(s); // spend = lo que sale del capital (bruto)
+    const mP = m(p.price), mT = m(p.total), dM = Math.max(0, (p.total - p.price) / 12); // dM: dividendos (ya con impuestos) que se reinvierten
+    const T = App.taxes, def = T.resolve(s.tax), net = s.retNeeds + s.retLeisure;
+    const grossAt = q => (net > 0 ? T.grossOf(def, net * 12, q) / 12 : 0); // bruto mensual que hay que sacar para cobrar `net` tras impuestos
+    const gainShare = (t, b) => (t > 0 ? clamp(1 - b / t, 0, 1) : 0);     // parte del capital que es ganancia (coste medio)
     const years = s.workYears + s.retireYears;
     const invested = [s.initial], price = [s.initial], total = [s.initial], decline = [];
-    let depleted = null;
+    let depleted = null, basis = s.initial, spend = 0, first = 0, q0 = 0; // basis: lo aportado (coste), en € de hoy: la inflación lo va "gastando"
     for (let y = 0; y < years; y++) {
       let i = invested[y], pr = price[y], t = total[y];
       if (opts.crash && y === s.workYears) t *= 1 - opts.crash;
       const start = t, working = y < s.workYears;
+      if (!working) { // cada año se recalcula el bruto según cuánta ganancia haya en el capital
+        const q = gainShare(t, basis); spend = grossAt(q);
+        if (y === s.workYears) { first = spend; q0 = q; }
+      }
       for (let k = 0; k < 12; k++) {
-        if (working) { pr = pr * (1 + mP) + s.invest; t = t * (1 + mT) + s.invest; i += s.invest; }
-        else t = Math.max(0, t * (1 + mT) - spend);
+        if (working) { basis = basis / infM + s.invest + t * dM; pr = pr * (1 + mP) + s.invest; t = t * (1 + mT) + s.invest; i += s.invest; }
+        else { const tb = t * (1 + mT); basis = basis / infM + t * dM; t = Math.max(0, tb - spend); basis = tb > 0 ? basis * (t / tb) : 0; }
       }
       invested.push(i); price.push(working ? pr : null); total.push(t);
       decline.push(!working && t < start * 0.9999);
@@ -68,8 +72,9 @@
     // Mismo plan sin descontar la inflación: lo que marcaría la cuenta en euros "de cada año" (nominales).
     const nominal = total.map((t, y) => t * Math.pow(1 + infl, y));
     const nominalDecline = decline.map((_, y) => y >= s.workYears && nominal[y + 1] < nominal[y] * 0.9999);
-    return { years, work: s.workYears, invested, price, total, decline, nominal, nominalDecline, depleted, capital, spend, net,
-             withdrawalRate: capital > 0 ? spend * 12 / capital : Infinity,
+    return { years, work: s.workYears, invested, price, total, decline, nominal, nominalDecline, depleted, capital,
+             spend: first, net, q0, // spend = bruto mensual el primer año de jubilación; net = lo que cobras tras impuestos
+             withdrawalRate: capital > 0 ? first * 12 / capital : Infinity,
              realReturn: (1 + p.total) / (1 + infl) - 1 };
   }
 
@@ -90,21 +95,27 @@
    * de la cartera (conserva rachas y caídas), recentrada en la rentabilidad esperada, y sortea la inflación de cada año
    * con su variación histórica real. Devuelve la probabilidad de agotar el dinero y lo pronto que ocurre.
    */
-  function monteCarlo(s, exp, market, infl, volEst, runs = 300) {
+  function monteCarlo(s, exp, market, infl, volEst, divM, runs = 300) {
     const rand = rng(20261107), hist = market?.returns, L = hist?.length || 0, B = Math.min(12, L);
     const mean = L ? hist.reduce((a, x) => a + x, 0) / L : 0, target = Math.pow(1 + exp, 1 / 12) - 1;
-    const workM = s.workYears * 12, totalM = workM + s.retireYears * 12, spend = retGross(s);
+    const workM = s.workYears * 12, totalM = workM + s.retireYears * 12;
+    const T = App.taxes, def = T.resolve(s.tax), net = s.retNeeds + s.retLeisure;
     let fails = 0, early = 0;
     for (let k = 0; k < runs; k++) {
-      let w = s.initial, idx = 0, left = 0, inf = 1;
+      let w = s.initial, basis = s.initial, spend = 0, idx = 0, left = 0, inf = 1; // basis: coste de lo aportado (€ de hoy)
       for (let m = 0; m < totalM; m++) {
         if (m % 12 === 0) inf = Math.pow(1 + Math.max(-0.02, s.inflation / 100 + (infl ? infl.sd * gauss(rand) : 0)), 1 / 12);
         let r;
         if (L) { if (left === 0) { idx = Math.floor(rand() * (L - B + 1)); left = B; } r = hist[idx++] - mean + target; left--; }
         else r = target + (volEst / Math.sqrt(12)) * gauss(rand);
         const g = Math.max(-0.99, (1 + r) / inf - 1);
-        if (m < workM) w = w * (1 + g) + s.invest;
-        else { w = w * (1 + g) - spend; if (w <= 0) { fails++; early += 1 - (m - workM) / (totalM - workM); break; } }
+        if (m < workM) { basis = basis / inf + s.invest + w * divM; w = w * (1 + g) + s.invest; }
+        else {
+          if ((m - workM) % 12 === 0) spend = net > 0 ? T.grossOf(def, net * 12, w > 0 ? clamp(1 - basis / w, 0, 1) : 0) / 12 : 0; // bruto del año según la ganancia acumulada
+          const wb = w * (1 + g); basis = basis / inf + w * divM; w = wb - spend;
+          if (w <= 0) { fails++; early += 1 - (m - workM) / (totalM - workM); break; }
+          basis *= w / wb;
+        }
       }
     }
     const prob = fails / runs;
@@ -120,7 +131,7 @@
     const market = inputs?.market || null, infl = inputs?.infl || null;
     const world = portfolio({ ...s, alloc: { VT: 100 }, prov: {} }, rateOf).total;
     const exp = Math.min(p.total, world), volEst = p.vol / 100;
-    const mc = monteCarlo(s, exp, market, infl, volEst);
+    const mc = monteCarlo(s, exp, market, infl, volEst, (p.total - p.price) / 12);
     const score = Math.round(mc.score);
     const [, level, color] = LEVELS.find(l => score < l[0]);
     return { score, level, color, prob: mc.prob, exp, capped: p.total > world, vol: market ? market.vol : volEst,
@@ -162,5 +173,5 @@
     });
   }
 
-  App.finance = { retGross, normalize, averageProfile, risk, portfolio, simulate, strategies, cheapest, providerOf };
+  App.finance = { normalize, averageProfile, risk, portfolio, simulate, strategies, cheapest, providerOf };
 })(window.App = window.App || {});
