@@ -46,6 +46,8 @@
     showDividends: true, // ver la rentabilidad de cada fondo con dividendos (solo cambia lo que se muestra; la simulación ya los incluye)
     hideCosts: true,     // true: la cifra de cada fondo NO descuenta inflación ni TER; false: se muestra ya descontada (solo cambia lo que se muestra)
     stratBase: 'avg', // punto de partida de las estrategias: 'avg' (salario medio) | 'mine' (tus datos)
+    retBasis: 'net',  // el importe "Ingresos de la inversión" se introduce en 'net' (tras impuestos) o 'gross' (bruto)
+    tax: { country: 'ES', scale: null, custom: null }, // impuestos de la jubilación: país (data/tax-data.js) o 'CUSTOM' con tramos propios
   };
 
   // Esquema declarativo: añadir un campo = añadir una línea. col = columna de escritorio ('a' | 'b').
@@ -64,7 +66,7 @@
       { key: 'workYears', label: 'Años invirtiendo mientras cobras', min: 1, max: 50, step: 1, suffix: 'años' },
       { key: 'inflation', label: 'Inflación media', max: 10, step: 0.1, suffix: '%' },
     ]},
-    { id: 'retire', title: 'Vivir de las inversiones', col: 'a', note: 'Importes en € de hoy: el gráfico ya los ajusta a la inflación año a año.', fields: [
+    { id: 'retire', title: 'Vivir de las inversiones', col: 'a', note: 'Importes en € de hoy: el gráfico ya los ajusta a la inflación año a año. Los tramos de impuestos también son los de hoy y se supone que se ajustan a la inflación cada año.', fields: [
       { key: 'retireYears', label: 'Años de jubilación a cubrir', min: 5, max: 60, step: 1, suffix: 'años' },
       { key: 'retLinked', label: 'Mismos gastos que ahora', type: 'check' },
       // Lo que retiras cada mes = necesidades + ocio. Los % de abajo son sobre estos ingresos (suman 100 %).

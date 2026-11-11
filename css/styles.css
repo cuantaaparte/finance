@@ -150,3 +150,30 @@ button.ghost{background:transparent;color:var(--text);border:1px solid var(--lin
   .chart-wrap{height:max(14rem,34vh)}
   .kpis{gap:.6rem}.kpi{padding:.5rem .8rem}.kpi small{font-size:.72rem}.kpi b{font-size:1.15rem}
 }
+
+/* ---- Impuestos de la jubilación ---- */
+.ret-extra{display:flex;flex-direction:column;gap:.35rem;margin:.1rem 0 .6rem}
+.seg-s{align-self:flex-start}
+.ret-info{display:flex;justify-content:space-between;align-items:flex-start;gap:.5rem;font-size:.72rem;color:var(--muted);line-height:1.35}
+.ret-info .btn{flex:none;font-size:.72rem;white-space:nowrap}
+.tax-dlg{background:var(--card);color:var(--text);border:1px solid var(--line);border-radius:var(--r);padding:0;width:min(48rem,94vw);max-height:90vh}
+.tax-dlg[open]{display:flex;flex-direction:column}
+.tax-dlg::backdrop{background:rgba(0,0,0,.65)}
+.tax-head{display:flex;justify-content:space-between;align-items:center;gap:.5rem;padding:.6rem .8rem;border-bottom:1px solid var(--line)}.tax-head h2{margin:0}
+#tax-body{padding:.7rem .8rem;overflow-y:auto}
+.tax-row{display:flex;flex-wrap:wrap;gap:.5rem 1rem;align-items:center;margin:.3rem 0}
+.tax-row label{display:flex;align-items:center;gap:.4rem;font-size:.8rem;color:var(--muted)}
+.tax-row select{width:auto;max-width:100%}
+.tax-h{font-size:.82rem;margin:.7rem 0 .2rem}
+.tbl-wrap{overflow-x:auto}
+.tax-tbl{width:100%;border-collapse:collapse;font-size:.78rem;margin:.2rem 0 .4rem}
+.tax-tbl th{text-align:left;color:var(--muted);font-weight:500;font-size:.7rem}
+.tax-tbl th,.tax-tbl td{padding:.2rem .3rem}
+.tax-tbl thead th{border-bottom:1px solid var(--line)}
+.tax-tbl .num{text-align:right;white-space:nowrap}
+.tax-tbl input[type=number]{width:6.8rem}.tax-tbl input.rate,.soc-row input.rate{width:4.2rem}
+.tax-tbl tr.tot th,.tax-tbl tr.tot td{border-top:1px solid var(--line);font-weight:600;color:var(--ok)}
+.soc-row{display:flex;align-items:center;gap:.4rem;margin-bottom:.3rem}.soc-row input[type=text]{flex:1;min-width:0}
+.del-x{background:transparent;color:var(--bad);border:1px solid var(--line);border-radius:7px;padding:.1rem .45rem;cursor:pointer;font:inherit}
+.muted{color:var(--muted)}
+#tax-body .note{margin:0 0 .5rem}

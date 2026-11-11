@@ -1,7 +1,7 @@
 /* Interfaz: genera formularios desde el esquema, enlaza eventos y pinta resultados. */
 (function (App) {
   'use strict';
-  const { config, storage, finance, data, chart, scenarioCode } = App;
+  const { config, storage, finance, data, chart, scenarioCode, taxes } = App;
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
   const eur = new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 });
@@ -14,13 +14,15 @@
   const state = Object.assign(structuredClone(config.DEFAULT_STATE), storage.get(config.STORAGE.settings, {}));
   if (!Object.keys(state.alloc || {}).length) state.alloc = { ...config.DEFAULT_STATE.alloc };
   state.prov = state.prov || {};
+  state.tax = taxes.clean(state.tax); // impuestos guardados: se validan al abrir
+  if (!['net', 'gross'].includes(state.retBasis)) state.retBasis = 'net';
   delete state.histYears; // ajuste antiguo (años hacia atrás), sustituido por histFrom/histTo
   let base = null;          // últimos datos introducidos por el usuario: de aquí salen las estrategias
   let active = null;        // estrategia aplicada actualmente
   let scenarios = storage.get(config.STORAGE.scenarios, []);
   let raf = 0;
   // Ajustes de VISTA que una estrategia no debe pisar (antes, al aplicar una, volvía a "Salario medio" porque la copia guardaba el valor antiguo).
-  const VIEW_KEYS = ['stratBase', 'period', 'showInvested', 'showPrice', 'showTotal', 'showNominal', 'showDividends', 'hideCosts'];
+  const VIEW_KEYS = ['stratBase', 'period', 'showInvested', 'showPrice', 'showTotal', 'showNominal', 'showDividends', 'hideCosts', 'retBasis'];
   const applyState = next => { const keep = Object.fromEntries(VIEW_KEYS.map(k => [k, state[k]])); Object.assign(state, structuredClone(next), keep); };
   const factor = () => (state.period === 'year' ? 12 : 1);
   const clamp = (x, a, b) => Math.min(Math.max(x, a), b);
@@ -64,6 +66,14 @@
         '↺ Volver al periodo por defecto (desde que hay datos de todos los índices hasta hoy)'));
   }
 
+  /** Debajo de "Ingresos de la inversión": elegir neto/bruto, descripción (con el importe sin ajustar a inflación) y botón de impuestos. */
+  function buildRetExtras() {
+    const seg = h('div', { class: 'seg seg-s', id: 'ret-basis', title: 'Neto: lo que quieres cobrar tras impuestos. Bruto: lo que sacas de las inversiones antes de impuestos.' },
+      ...[['net', 'Neto'], ['gross', 'Bruto']].map(([v, l]) => h('button', { type: 'button', 'data-rb': v, onclick: () => { state.retBasis = v; refresh(false); } }, l)));
+    return h('div', { class: 'ret-extra' }, seg,
+      h('div', { class: 'ret-info' }, h('div', { id: 'ret-desc' }), h('button', { type: 'button', class: 'btn ghost', id: 'tax-open', onclick: openTax }, 'Ajustar impuestos')));
+  }
+
   function buildField(f) {
     if (f.type === 'range2') return buildHistRange(f);
     const link = f.linked ? { 'data-linked': '' } : {};
@@ -74,7 +84,9 @@
       h('input', { type: 'number', 'data-key': f.key, step: 'any', min: f.min ?? 0, inputmode: 'decimal', ...link }),
       h('span', { class: 'suf' }, isMoney ? '€' : f.suffix || ''));
     if (f.pct) row.append(h('input', { type: 'number', class: 'pct', 'data-key': f.pct, min: 0, max: 100, step: 'any', inputmode: 'decimal', ...link }), h('span', { class: 'suf' }, '%'));
-    return h('div', { class: 'field', 'data-field': f.key }, h('label', {}, f.label, f.unit ? h('em', { 'data-unit': '' }) : null), row);
+    const field = h('div', { class: 'field', 'data-field': f.key }, h('label', {}, f.label, f.unit ? h('em', { 'data-unit': '' }) : null), row);
+    if (f.key === 'retIncome') field.append(buildRetExtras());
+    return field;
   }
 
   function buildFunds() {
@@ -123,7 +135,7 @@
     if (key === 'periodYearly') state.period = v ? 'year' : 'month';
     else if (key in PCT) { state[PCT[key]] = (state.net * v) / 100; flag(PCT[key]); }
     else if (key in RET_PCT) setRetShare(key, v);
-    else if (key === 'retIncome') setRetIncome(v / factor());
+    else if (key === 'retIncome') setRetIncome(state.retBasis === 'gross' ? taxes.netOf(taxes.resolve(state.tax), (v / factor()) * 12) / 12 : v / factor()); // en bruto: se convierte a neto con los impuestos
     else if (MONEY.has(key)) { state[key] = v / factor(); flag(key); }
     else state[key] = v;
     refresh(key !== 'showDividends' && key !== 'hideCosts'); // son solo de vista: no deben reiniciar la base de las estrategias
@@ -160,6 +172,7 @@
   function shown(key) {
     if (key in PCT) return state.net ? (state[PCT[key]] / state.net) * 100 : 0;
     if (key in RET_PCT) return retIncome() > 0 ? (state[RET_PCT[key]] / retIncome()) * 100 : 0;
+    if (key === 'retIncome' && state.retBasis === 'gross') return finance.retGross(state) * factor();
     return MONEY.has(key) ? valueOf(key) * factor() : state[key];
   }
 
@@ -184,11 +197,13 @@
       }
       if ('linked' in el.dataset) el.disabled = state.retLinked;
     });
-    $$('[data-unit]').forEach(e => (e.textContent = state.period === 'year' ? '(€ / año)' : '(€ / mes)'));
+    $$('[data-unit]').forEach(e => { const b = e.closest('[data-field="retIncome"]') ? (state.retBasis === 'gross' ? ' bruto' : ' neto') : ''; e.textContent = `(€ / ${state.period === 'year' ? 'año' : 'mes'}${b})`; });
     $('#hint-nominal').hidden = !state.showNominal; $('.legend').classList.toggle('nominal-on', !!state.showNominal);
     renderHist();
     renderFunds();
     renderExtremes();
+    renderRetInfo();
+    $$('#ret-basis button').forEach(b => b.classList.toggle('on', b.dataset.rb === state.retBasis));
 
     const port = finance.portfolio(state, rateOf), res = finance.simulate(state, port);
     chart.render(res, state);
@@ -199,6 +214,7 @@
     const st = data.status(), badge = $('#data-status');
     badge.textContent = st.mode === 'live' ? `En vivo (${st.count}/${config.FUNDS.length})` : st.mode === 'saved' ? `Datos del ${st.date || 'archivo local'}` : 'Sin datos · estimados (reintentar)';
     badge.classList.toggle('live', st.mode !== 'none');
+    if ($('#tax-dlg').open) updateTaxPreview();
   }
 
   /** Aviso (vacío = todo bien) cuando a algún fondo elegido le faltan datos en el periodo seleccionado. */
@@ -306,7 +322,7 @@
         h('b', {}, st.title), h('p', {}, st.unavailable ? 'No es alcanzable con tus datos actuales.' : st.desc),
         st.unavailable ? null : h('div', { class: 'tags' },
           h('span', {}, `Trabajas ${st.state.workYears} años`), h('span', {}, `Capital ${eur.format(st.res.capital)}`),
-          h('span', {}, `Retiras ${eur.format(st.res.spend)}/mes`), h('span', { class: st.risk.color ? 'risk-' + st.risk.color : '' }, `Riesgo ${st.risk.level} (${st.risk.score}/100)`)))));
+          h('span', { title: `Bruto que sale de las inversiones: ${eur.format(st.res.spend)}/mes` }, `Retiras ${eur.format(st.res.net)}/mes netos`), h('span', { class: st.risk.color ? 'risk-' + st.risk.color : '' }, `Riesgo ${st.risk.level} (${st.risk.score}/100)`)))));
   }
 
   /* ---------- Mis supuestos: guardar, renombrar, exportar e importar ---------- */
@@ -358,7 +374,7 @@
     if (editingId !== null && !force) return; // no pisar el campo mientras se escribe el nombre
     const summary = sc => {
       const s = sc.state, m = s.period === 'year' ? 12 : 1, u = s.period === 'year' ? '/año' : '/mes';
-      return `Neto ${eur.format(s.net * m)}${u} · invierte ${eur.format(s.invest * m)}${u} · inicial ${eur.format(s.initial)} · ${s.workYears} años · inflación ${s.inflation} % · histórico ${s.histFrom || s.histTo ? `${s.histFrom ?? '…'}–${s.histTo ?? 'hoy'}` : 'por defecto'} · bróker ${s.brokerFee} % · `
+      return `Neto ${eur.format(s.net * m)}${u} · invierte ${eur.format(s.invest * m)}${u} · inicial ${eur.format(s.initial)} · ${s.workYears} años · inflación ${s.inflation} % · histórico ${s.histFrom || s.histTo ? `${s.histFrom ?? '…'}–${s.histTo ?? 'hoy'}` : 'por defecto'} · bróker ${s.brokerFee} % · impuestos ${taxes.label(s.tax)} · `
         + Object.entries(s.alloc).map(([id, w]) => `${id} ${round(w, 1)} %`).join(', ');
     };
     const nameCell = sc => {
@@ -379,6 +395,135 @@
       h('small', {}, summary(sc)))));
   }
 
+
+  /* ---------- Impuestos de la jubilación ---------- */
+  const fmtMoney = (v, cur) => { try { return new Intl.NumberFormat('es-ES', { style: 'currency', currency: cur, maximumFractionDigits: 0 }).format(v); } catch { return Math.round(v) + ' ' + cur; } };
+  const nomFactor = () => Math.pow(1 + state.inflation / 100, state.workYears); // inflación acumulada hasta jubilarte
+
+  /** Descripción bajo "Ingresos de la inversión": neto, bruto e impuestos de hoy, y lo que serían en euros sin ajustar a inflación. */
+  function renderRetInfo() {
+    const def = taxes.resolve(state.tax), net = retIncome() * 12, c = taxes.calc(def, taxes.grossOf(def, net)), m = factor(), f = nomFactor();
+    const per = state.period === 'year' ? '/año' : '/mes', v = x => eur.format((x / 12) * m) + per, n = x => eur.format((x / 12) * m * f) + per;
+    $('#ret-desc').replaceChildren(
+      h('div', {}, `Neto ${v(c.net)} · bruto ${v(c.gross)} · impuestos ${pct(c.rate)} (${def.label})`),
+      h('div', { title: 'Mismo importe sin descontar la inflación: lo que verías en tu cuenta el primer año de jubilación. Los tramos de impuestos también se suben con la inflación.' },
+        `Sin ajustar a inflación (año ${state.workYears}): neto ${n(c.net)} · bruto ${n(c.gross)}`));
+  }
+
+  function openTax() { renderTax(); const d = $('#tax-dlg'); if (!d.open) d.showModal(); }
+  /** Pasa los impuestos actuales a «Personalizado» (copia los tramos del país elegido) para poder editarlos. */
+  function ensureCustom() {
+    if (state.tax.country === 'CUSTOM' && state.tax.custom) return state.tax.custom;
+    const d = taxes.resolve(state.tax);
+    state.tax.custom = { from: d.label + (d.year ? ' (' + d.year + ')' : ''), currency: d.currency, fx: d.fx, allowance: d.allowance, brackets: structuredClone(d.brackets), social: structuredClone(d.social) };
+    state.tax.country = 'CUSTOM';
+    return state.tax.custom;
+  }
+  function syncTaxHead() {
+    const isC = state.tax.country === 'CUSTOM', sel = $('#tax-country'), from = $('#tax-from');
+    if (sel) sel.value = state.tax.country;
+    $('#tax-scale-wrap')?.remove();
+    if (from) { from.hidden = !isC; from.textContent = isC ? `Basado en: ${state.tax.custom?.from || 'tus datos'}. Cualquier cambio queda como «Personalizado»; elige un país para volver a sus valores.` : ''; }
+  }
+
+  function renderTax() {
+    const def = taxes.resolve(state.tax), cur = def.currency, country = def.custom ? null : taxes.countries().find(x => x.id === def.id);
+    const infl = String(round(state.inflation, 2)).replace('.', ',');
+    const sel = h('select', { id: 'tax-country', 'aria-label': 'País' }, ...taxes.countries().map(x => h('option', { value: x.id }, x.name)), h('option', { value: 'CUSTOM' }, '✏️ Personalizado'));
+    sel.value = state.tax.country;
+    const scaleSel = country && country.scales.length > 1 ? h('select', { id: 'tax-scale', 'aria-label': 'Tipo de renta' }, ...country.scales.map(s => h('option', { value: s.id }, s.name))) : null;
+    if (scaleSel) scaleSel.value = def.scaleId;
+    const last = def.brackets.length - 1;
+    const rows = def.brackets.map((b, i) => h('tr', {},
+      h('td', {}, i === last ? h('span', { class: 'muted' }, 'en adelante') : h('input', { type: 'number', min: 0, step: 'any', 'data-t': 'up', 'data-i': i, value: round(b.upTo), 'aria-label': 'Base imponible hasta' })),
+      h('td', {}, h('input', { type: 'number', class: 'rate', min: 0, max: 99, step: 'any', 'data-t': 'rate', 'data-i': i, value: round(b.rate), 'aria-label': 'Tipo' }), ' %'),
+      h('td', { class: 'num t-paid', 'data-i': i }),
+      h('td', { class: 'num t-nom', 'data-i': i }),
+      h('td', {}, def.brackets.length > 1 ? h('button', { type: 'button', class: 'del-x', 'data-t': 'del', 'data-i': i, title: 'Quitar tramo' }, '✕') : null)));
+    const social = def.social.map((x, i) => h('div', { class: 'soc-row' },
+      h('input', { type: 'text', 'data-t': 'soc-name', 'data-i': i, value: x.name, maxlength: 40, 'aria-label': 'Nombre' }),
+      h('input', { type: 'number', class: 'rate', min: 0, max: 99, step: 'any', 'data-t': 'soc-rate', 'data-i': i, value: round(x.rate), 'aria-label': 'Porcentaje' }), h('span', { class: 'suf' }, '%'),
+      h('button', { type: 'button', class: 'del-x', 'data-t': 'soc-del', 'data-i': i, title: 'Quitar' }, '✕')));
+    const fxTxt = cur !== 'EUR' ? ` Tipo de cambio usado: ${String(round(def.fx, 4)).replace('.', ',')} ${cur} por €${taxes.fxDate() && !def.custom ? ' (actualizado ' + new Date(taxes.fxDate()).toLocaleDateString('es-ES') + ')' : ''}.` : '';
+    $('#tax-body').replaceChildren(
+      h('div', { class: 'tax-row' },
+        h('label', {}, 'País', sel), scaleSel ? h('label', { id: 'tax-scale-wrap' }, 'Tipo de renta', scaleSel) : null),
+      h('p', { class: 'note', id: 'tax-from', hidden: '' }),
+      h('p', { class: 'note' }, `Importes en € de hoy. Los tramos son los de hoy y se supone que se ajustan a la inflación cada año (${infl} %): por eso, en la simulación (que va en € de hoy), siempre valen lo mismo. La columna «nominal» muestra cuánto valdría cada límite sin ajustar a inflación el primer año de jubilación (año ${state.workYears}).`),
+      h('p', { class: 'note' }, 'Se aplican a toda la retirada como si fuera renta. En la realidad, vender fondos suele tributar solo por la ganancia, así que es una estimación prudente (en la práctica pagarías algo menos).'),
+      !def.custom && def.note ? h('p', { class: 'note' }, def.note + (def.approx ? ' (Valores aproximados.)' : '')) : null,
+      h('h3', { class: 'tax-h' }, `Tramos (${cur} al año)`),
+      h('div', { class: 'tbl-wrap' }, h('table', { class: 'tax-tbl' },
+        h('thead', {}, h('tr', {}, h('th', {}, 'Base imponible hasta'), h('th', {}, 'Tipo'), h('th', {}, 'Pagas al año (€ de hoy)'), h('th', {}, `Límite nominal, año ${state.workYears}`), h('th', {}))),
+        h('tbody', {}, ...rows))),
+      h('div', { class: 'tax-row' },
+        h('button', { type: 'button', class: 'btn ghost', 'data-t': 'add' }, '+ Añadir tramo'),
+        h('label', {}, `Mínimo exento (${cur}/año)`, h('input', { type: 'number', min: 0, step: 'any', 'data-t': 'allow', value: round(def.allowance) }))),
+      h('h3', { class: 'tax-h' }, 'Seguridad social'),
+      social.length ? h('div', {}, ...social) : h('p', { class: 'note' }, 'No se aplica: las retiradas de inversiones no cotizan a la Seguridad Social en ninguno de los países de la lista. Si en tu caso sí (por ejemplo, cotizaciones sobre una pensión), añádela aquí.'),
+      h('button', { type: 'button', class: 'btn ghost', 'data-t': 'soc-add' }, '+ Añadir cotización'),
+      h('h3', { class: 'tax-h' }, 'Resultado con tu plan'),
+      h('div', { class: 'tbl-wrap' }, h('table', { class: 'tax-tbl', id: 'tax-sum' })),
+      h('p', { class: 'note' }, (def.custom ? 'Tramos personalizados.' : `Datos de referencia ${def.year}${def.approx ? ' (aproximados)' : ''}.`) + ' No hay una API pública fiable de tramos fiscales: están en data/tax-data.js (edítalo cuando cambien).' + fxTxt));
+    syncTaxHead();
+    updateTaxPreview();
+  }
+
+  /** Rellena lo que depende del plan (lo que pagas por tramo y el resumen) sin tocar los campos que se están editando. */
+  function updateTaxPreview() {
+    if (!$('#tax-sum')) return;
+    const def = taxes.resolve(state.tax), c = taxes.calc(def, taxes.grossOf(def, retIncome() * 12)), f = nomFactor();
+    $$('#tax-body .t-paid').forEach(td => { td.textContent = eur.format(c.rows[td.dataset.i]?.tax ?? 0); });
+    $$('#tax-body .t-nom').forEach(td => { const b = def.brackets[td.dataset.i]; td.textContent = b?.upTo == null ? '—' : fmtMoney(b.upTo * f, def.currency); });
+    const line = (label, y, cls) => h('tr', { class: cls || null }, h('th', {}, label), h('td', { class: 'num' }, eur.format(y)), h('td', { class: 'num' }, eur.format(y / 12)), h('td', { class: 'num' }, eur.format((y / 12) * f)));
+    $('#tax-sum').replaceChildren(
+      h('thead', {}, h('tr', {}, h('th', {}, ''), h('th', {}, '€ de hoy / año'), h('th', {}, '€ de hoy / mes'), h('th', {}, `€ nominales / mes (año ${state.workYears})`))),
+      h('tbody', {}, line('Bruto retirado de las inversiones', c.gross), line('− Impuesto sobre la renta', c.income),
+        def.social.length ? line('− Seguridad social', c.social) : null, line('= Neto que cobras', c.net, 'tot')),
+      h('tfoot', {}, h('tr', {}, h('td', { colspan: 4, class: 'muted' }, `Tipo medio ${pct(c.rate)} · tipo marginal ${pct(c.marginal)}`))));
+  }
+
+  function initTax() {
+    const dlg = $('#tax-dlg'), body = $('#tax-body');
+    $('#tax-close').addEventListener('click', () => dlg.close());
+    dlg.addEventListener('click', e => { if (e.target === dlg) dlg.close(); });
+    body.addEventListener('change', e => {
+      const el = e.target, t = el.dataset.t;
+      if (el.id === 'tax-country') { if (el.value === 'CUSTOM') ensureCustom(); else { state.tax.country = el.value; state.tax.scale = null; } refresh(); renderTax(); }
+      else if (el.id === 'tax-scale') { state.tax.scale = el.value; refresh(); renderTax(); }
+      else if (t === 'up' && state.tax.custom) { // al salir del campo se reordenan los tramos
+        const c = state.tax.custom, before = JSON.stringify(c.brackets.map(b => b.upTo));
+        c.brackets = taxes.normBrackets(c.brackets); refresh();
+        if (before !== JSON.stringify(c.brackets.map(b => b.upTo))) renderTax();
+      }
+    });
+    body.addEventListener('input', e => {
+      const el = e.target, t = el.dataset.t, i = Number(el.dataset.i), v = parseFloat(el.value);
+      if (!t || el.tagName !== 'INPUT' || (t !== 'soc-name' && !Number.isFinite(v))) return;
+      const c = ensureCustom();
+      if (t === 'up') { if (v > 0) c.brackets[i].upTo = v; }
+      else if (t === 'rate') c.brackets[i].rate = clamp(v, 0, 99);
+      else if (t === 'allow') c.allowance = Math.max(0, v);
+      else if (t === 'soc-rate') c.social[i].rate = clamp(v, 0, 99);
+      else if (t === 'soc-name') c.social[i].name = el.value.slice(0, 40);
+      else return;
+      syncTaxHead(); refresh(); // el resumen se repinta en render()
+    });
+    body.addEventListener('click', e => {
+      const b = e.target.closest('button[data-t]'); if (!b) return;
+      const t = b.dataset.t, i = Number(b.dataset.i), c = ensureCustom();
+      if (t === 'add') {
+        if (c.brackets.length >= 60) return;
+        const fin = c.brackets.filter(x => x.upTo != null), lastUp = fin.length ? fin[fin.length - 1].upTo : 0;
+        c.brackets.splice(c.brackets.length - 1, 0, { upTo: Math.round(lastUp ? lastUp * 1.5 : 10000), rate: c.brackets.at(-1).rate });
+      } else if (t === 'del') { c.brackets.splice(i, 1); c.brackets = taxes.normBrackets(c.brackets); }
+      else if (t === 'soc-add') { if (c.social.length < 10) c.social.push({ name: 'Seguridad social', rate: 0 }); }
+      else if (t === 'soc-del') c.social.splice(i, 1);
+      else return;
+      refresh(); renderTax();
+    });
+  }
+
   function init() {
     buildInputs();
     $('#app-version').textContent = config.VERSION ? 'Versión ' + config.VERSION : '';
@@ -387,6 +532,7 @@
     const head = $('.top'), syncHead = () => document.documentElement.style.setProperty('--head-h', head.offsetHeight + 'px');
     new ResizeObserver(syncHead).observe(head); syncHead();
     chart.init($('#chart'), $('#tip'));
+    initTax();
     document.addEventListener('input', e => { const el = e.target.closest('[data-key]'); if (el) set(el.dataset.key, el); });
     document.addEventListener('input', e => { if (e.target.dataset?.hist) onHist(e.target.dataset.hist, e.target, false); });
     document.addEventListener('change', e => { if (e.target.dataset?.hist) onHist(e.target.dataset.hist, e.target, true); });

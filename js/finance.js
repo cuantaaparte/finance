@@ -6,6 +6,8 @@
   const clamp = (x, a, b) => Math.min(Math.max(x, a), b);
   const cheapest = f => f.providers.reduce((a, b) => (b.ter < a.ter ? b : a));
   const providerOf = (s, f) => f.providers.find(p => p.id === s.prov?.[f.id]) || f.providers[0];
+  /** Retirada BRUTA mensual (€ de hoy) que hace falta para cobrar neto lo que pides tras impuestos. Los tramos se suponen ajustados a la inflación. */
+  const retGross = s => { const n = s.retNeeds + s.retLeisure; return n > 0 ? App.taxes.grossOf(App.taxes.resolve(s.tax), n * 12) / 12 : 0; };
 
   /** Mantiene coherentes sueldo/gastos/ocio/inversión (nunca superan el sueldo). */
   function normalize(s) {
@@ -46,7 +48,7 @@
     const infl = s.inflation / 100;
     const m = r => Math.pow((1 + r) / (1 + infl), 1 / 12) - 1; // tasa mensual real
     const mP = m(p.price), mT = m(p.total);
-    const spend = s.retNeeds + s.retLeisure;
+    const net = s.retNeeds + s.retLeisure, spend = retGross(s); // spend = lo que sale del capital (bruto)
     const years = s.workYears + s.retireYears;
     const invested = [s.initial], price = [s.initial], total = [s.initial], decline = [];
     let depleted = null;
@@ -66,7 +68,7 @@
     // Mismo plan sin descontar la inflación: lo que marcaría la cuenta en euros "de cada año" (nominales).
     const nominal = total.map((t, y) => t * Math.pow(1 + infl, y));
     const nominalDecline = decline.map((_, y) => y >= s.workYears && nominal[y + 1] < nominal[y] * 0.9999);
-    return { years, work: s.workYears, invested, price, total, decline, nominal, nominalDecline, depleted, capital, spend,
+    return { years, work: s.workYears, invested, price, total, decline, nominal, nominalDecline, depleted, capital, spend, net,
              withdrawalRate: capital > 0 ? spend * 12 / capital : Infinity,
              realReturn: (1 + p.total) / (1 + infl) - 1 };
   }
@@ -91,7 +93,7 @@
   function monteCarlo(s, exp, market, infl, volEst, runs = 300) {
     const rand = rng(20261107), hist = market?.returns, L = hist?.length || 0, B = Math.min(12, L);
     const mean = L ? hist.reduce((a, x) => a + x, 0) / L : 0, target = Math.pow(1 + exp, 1 / 12) - 1;
-    const workM = s.workYears * 12, totalM = workM + s.retireYears * 12, spend = s.retNeeds + s.retLeisure;
+    const workM = s.workYears * 12, totalM = workM + s.retireYears * 12, spend = retGross(s);
     let fails = 0, early = 0;
     for (let k = 0; k < runs; k++) {
       let w = s.initial, idx = 0, left = 0, inf = 1;
@@ -139,7 +141,7 @@
           useFunds(ns, A.growth); ns.investAuto = true; ns.retLinked = true; normalize(ns);
           const w = earliest(ns, portfolio(ns, rateOf), r => r.depleted === null); if (!w) return false; ns.workYears = w;
         } },
-      { id: 'forever', title: '♾️ Capital que nunca baja', desc: `Retiras ${config.FOREVER_SPEND} €/mes y aun así el capital crece cada año (con inflación).`,
+      { id: 'forever', title: '♾️ Capital que nunca baja', desc: `Retiras ${config.FOREVER_SPEND} €/mes netos y aun así el capital crece cada año (con inflación).`,
         patch(ns) {
           useFunds(ns, A.growth); ns.investAuto = true; normalize(ns);
           const spend = Math.max(config.FOREVER_SPEND, ns.needs + ns.leisure), share = ns.needs + ns.leisure ? ns.needs / (ns.needs + ns.leisure) : 0.7;
@@ -160,5 +162,5 @@
     });
   }
 
-  App.finance = { normalize, averageProfile, risk, portfolio, simulate, strategies, cheapest, providerOf };
+  App.finance = { retGross, normalize, averageProfile, risk, portfolio, simulate, strategies, cheapest, providerOf };
 })(window.App = window.App || {});

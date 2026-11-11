@@ -10,7 +10,7 @@
     net: [0, 1e7], needs: [0, 1e7], leisure: [0, 1e7], invest: [0, 1e7], initial: [0, 1e9],
     workYears: [1, 100], retireYears: [1, 100], inflation: [-10, 100], brokerFee: [0, 100], retNeeds: [0, 1e7], retLeisure: [0, 1e7],
   };
-  const ENUMS = { period: ['month', 'year'], stratBase: ['avg', 'mine'] };
+  const ENUMS = { period: ['month', 'year'], stratBase: ['avg', 'mine'], retBasis: ['net', 'gross'] };
 
   const hash = s => { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); } return (h >>> 0).toString(16).padStart(8, '0'); };
   const toB64 = bytes => { let bin = ''; bytes.forEach(b => { bin += String.fromCharCode(b); }); return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); };
@@ -33,6 +33,7 @@
       if (k in ENUMS) out[k] = ENUMS[k].includes(v) ? v : d;
       else if (k === 'histFrom' || k === 'histTo') out[k] = Number.isInteger(v) && v >= 1900 && v <= 2100 ? v : null;
       else if (k === 'touched') out[k] = { needs: !!(isObj(v) && v.needs), leisure: !!(isObj(v) && v.leisure) };
+      else if (k === 'tax') out.tax = App.taxes.clean(src.tax); // país o tramos personalizados (se validan en taxes.js)
       else if (k === 'alloc' || k === 'prov') continue; // se tratan después
       else if (typeof d === 'boolean') out[k] = typeof v === 'boolean' ? v : d;
       else if (typeof d === 'number') { const [lo, hi] = LIMITS[k] || [-1e9, 1e9]; out[k] = Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d; }

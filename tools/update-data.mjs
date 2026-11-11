@@ -7,8 +7,8 @@ import { dirname, join } from 'node:path';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const load = file => { const w = { App: {} }; new Function('window', readFileSync(join(root, file), 'utf8'))(w); return w.App; };
 const { config } = load('js/config.js');
-let old = {}, oldInflation = null;
-try { const snap = load('data/market-data.js').snapshot; old = snap?.series || {}; oldInflation = snap?.inflation || null; } catch { /* primera vez */ }
+let old = {}, oldInflation = null, oldFx = null;
+try { const snap = load('data/market-data.js').snapshot; old = snap?.series || {}; oldInflation = snap?.inflation || null; oldFx = snap?.fx || null; } catch { /* primera vez */ }
 
 const HEADERS = { 'User-Agent': 'Mozilla/5.0 (compatible; fondos-indexados-updater)' };
 const get = url => fetch(url, { headers: HEADERS, signal: AbortSignal.timeout(20000) }); // sin timeout, un servidor colgado bloquearía la Action
@@ -62,7 +62,23 @@ for (let attempt = 1; attempt <= 3; attempt++) {
 if (!inflation) console.warn('⚠ No hay datos de inflación: la app supondrá una inflación constante.');
 else if (inflation === oldInflation) console.warn('Inflación: se mantienen los datos anteriores.');
 
-const snapshot = { updated: new Date().toISOString(), series, inflation };
+// Tipos de cambio (unidades de cada moneda por 1 €) para convertir los tramos de data/tax-data.js. Si falla, se mantienen los anteriores.
+const currencies = [...new Set(((() => { try { return load('data/tax-data.js').taxData?.countries; } catch { return []; } })() || []).map(c => c.currency))].filter(c => c !== 'EUR');
+let fx = oldFx;
+const fxSources = [
+  async () => (await (await get('https://open.er-api.com/v6/latest/EUR')).json()).rates,
+  async () => (await (await get('https://api.frankfurter.app/latest?from=EUR&to=' + currencies.join(','))).json()).rates,
+];
+for (const source of fxSources) {
+  try {
+    const r = await source(), got = Object.fromEntries(currencies.filter(c => r?.[c] > 0).map(c => [c, r[c]]));
+    if (Object.keys(got).length) fx = { updated: new Date().toISOString(), rates: { ...fx?.rates, ...got } };
+    if (currencies.every(c => fx?.rates?.[c] > 0)) { console.log('Tipos de cambio:', JSON.stringify(fx.rates)); break; }
+  } catch (e) { console.warn('Tipos de cambio: fuente fallida (' + e.message + ')'); }
+}
+if (!fx) console.warn('⚠ Sin tipos de cambio: la web usará los de reserva de data/tax-data.js.');
+
+const snapshot = { updated: new Date().toISOString(), series, inflation, fx };
 writeFileSync(join(root, 'data/market-data.js'),
   `/* Generado por tools/update-data.mjs. No editar a mano. */\nwindow.App = window.App || {};\nwindow.App.snapshot = ${JSON.stringify(snapshot)};\n`);
 console.log(`Listo: ${ok}/${config.FUNDS.length} fondos actualizados.`);
