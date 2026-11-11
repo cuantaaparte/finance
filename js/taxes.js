@@ -18,7 +18,7 @@
     const c = DATA.countries.find(x => x.id === t.country) || DATA.countries[0];
     if (!c) return NONE;
     const s = c.scales.find(x => x.id === t.scale) || c.scales[0];
-    return { id: c.id, name: c.name, label: c.scales.length > 1 ? `${c.name} · ${s.short}` : c.name, currency: c.currency, fx: fxOf(c), year: c.year,
+    return { id: c.id, name: c.name, label: c.scales.length > 1 ? `${c.name} · ${s.short}` : c.name, currency: c.currency, fx: fxOf(c), year: s.year ?? c.year,
       scaleId: s.id, scaleName: s.name, on: s.on === 'all' ? 'all' : 'gain', inclusion: s.inclusion ?? 1, allowance: s.allowance || 0, brackets: s.brackets, social: s.social || [],
       note: [c.note, s.note].filter(Boolean).join(' '), approx: !!(c.approx || s.approx), custom: false };
   }
