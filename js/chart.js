@@ -28,9 +28,11 @@
     const k = (parseFloat(getComputedStyle(document.documentElement).fontSize) || 16) / 16; // escala con el tamaño de la interfaz
     for (const key in BASE) PAD[key] = BASE[key] * k;
     const iw = w - PAD.l - PAD.r, ih = h - PAD.t - PAD.b, dpr = window.devicePixelRatio || 1;
-    canvas.width = w * dpr; canvas.height = h * dpr;
+    const bw = Math.round(w * dpr), bh = Math.round(h * dpr);
+    if (canvas.width !== bw || canvas.height !== bh) { canvas.width = bw; canvas.height = bh; } // solo si cambia el tamaño
     const ctx = canvas.getContext('2d');
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
 
     const vals = [...res.total];
     if (s.showInvested) vals.push(...res.invested);

@@ -48,6 +48,23 @@
   /** Bruto anual necesario para quedarte con `net` anuales tras impuestos (la función es creciente: búsqueda binaria). */
   function grossOf(def, net, q) {
     if (!(net > 0)) return 0;
+    const m = def.on === 'all' ? 1 : Math.min(1, Math.max(0, q ?? 1));
+    if (m === 0) return net;
+    // Cálculo directo: el neto es una función por tramos lineales del bruto, así que se recorren los tramos y se despeja (sin iterar).
+    const scale = (def.fx || 1) * (def.inclusion ?? 1), allow = def.allowance || 0, soc = (def.social || []).reduce((a, x) => a + x.rate, 0) / 100;
+    if (scale > 0) {
+      let baseStart = 0, netStart = 0, ok = true;
+      const segs = [[allow / scale, soc], ...def.brackets.map(b => [b.upTo == null ? Infinity : (allow + b.upTo) / scale, (b.rate / 100) * (def.inclusion ?? 1) + soc])];
+      for (const [end0, slope] of segs) {
+        const end = Math.max(end0, baseStart), k = 1 - m * slope; // k = neto que te queda por cada € bruto extra dentro del tramo
+        if (k <= 0) { ok = false; break; }
+        const netEnd = end === Infinity ? Infinity : netStart + ((end - baseStart) / m) * k;
+        if (net <= netEnd) return baseStart / m + (net - netStart) / k;
+        baseStart = end; netStart = netEnd;
+      }
+      if (ok) return baseStart / m + net; // no debería llegar aquí (el último tramo es abierto)
+    }
+    // Casos raros (tipos del 100 % o más): búsqueda binaria
     let lo = net, hi = net * 2 + 1, n = 0;
     while (netOf(def, hi, q) < net && n++ < 50) hi *= 2;
     for (let i = 0; i < 40; i++) { const mid = (lo + hi) / 2; if (netOf(def, mid, q) < net) lo = mid; else hi = mid; }

@@ -203,3 +203,7 @@ button.ghost{background:transparent;color:var(--text);border:1px solid var(--lin
 .fd-field .pair input[type=number]{width:5.5rem}
 .fd-field .muted{display:block;font-size:.68rem;margin-top:.1rem}
 .fd-r{margin-left:auto}
+
+/* Mientras se mueve un slider, lo que se calcula después (riesgo y estrategias) se atenúa */
+#risk-total,#strategies{transition:opacity .15s}
+#risk-total.stale,#strategies.stale{opacity:.55}

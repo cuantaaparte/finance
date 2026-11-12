@@ -5,6 +5,8 @@
   const { config, storage } = App;
   const YEAR = 31557600, STALE_MS = 14 * 864e5; // segundos / ms
   const series = {}, liveIds = new Set(), customs = {}; // customs: fondos personalizados (ver customFunds.js)
+  const statsMemo = new Map(); let statsVer = 0; // caché de portfolioStats; se vacía cuando cambian los datos
+  const touch = () => { statsVer++; statsMemo.clear(); };
   let snapDate = null, terDate = null;
 
   const monthKey = t => { const d = new Date(t * 1000); return d.getUTCFullYear() * 12 + d.getUTCMonth(); };
@@ -60,10 +62,10 @@
     const stale = !snapDate || Date.now() - Date.parse(snapDate) > STALE_MS; // archivo local con más de 14 días: se intenta internet
     if (!force && !stale && series[fund.id]) return;
     const hit = storage.get(config.STORAGE.series, {})[fund.id];
-    if (!force && hit && Date.now() - hit.at < config.SERIES_TTL_MS) { series[fund.id] = oneForMonth(hit.pts); liveIds.add(fund.id); return; }
+    if (!force && hit && Date.now() - hit.at < config.SERIES_TTL_MS) { series[fund.id] = oneForMonth(hit.pts); liveIds.add(fund.id); touch(); return; }
     try {
       const pts = await download(fund);
-      series[fund.id] = pts; liveIds.add(fund.id);
+      series[fund.id] = pts; liveIds.add(fund.id); touch();
       const cache = storage.get(config.STORAGE.series, {});
       cache[fund.id] = { at: Date.now(), pts };
       storage.set(config.STORAGE.series, cache);
@@ -109,6 +111,14 @@
   /** Datos REALES de la cartera: rentabilidades mensuales (en los meses comunes a todos sus fondos), volatilidad con
    *  correlaciones, caída máxima y ratio de diversificación (media ponderada de volatilidades ÷ volatilidad de la cartera). */
   function portfolioStats(alloc, years) {
+    const key = statsVer + JSON.stringify([alloc, years]);
+    if (statsMemo.has(key)) return statsMemo.get(key);
+    const r = portfolioStatsRaw(alloc, years);
+    if (statsMemo.size > 60) statsMemo.clear();
+    statsMemo.set(key, r);
+    return r;
+  }
+  function portfolioStatsRaw(alloc, years) {
     let ids = Object.keys(alloc);
     const used = ids.filter(id => alloc[id] > 0);
     if (used.length) ids = used; // un fondo al 0 % no pesa ni debe recortar el histórico común de los demás
@@ -155,7 +165,7 @@
       return { mode, count: liveIds.size, date: snapDate ? new Date(snapDate).toLocaleDateString('es-ES') : null };
     },
     terDate: () => terDate,
-    setCustom: c => { for (const k in customs) delete customs[k]; Object.assign(customs, c); },
+    setCustom: c => { if (JSON.stringify(c) === JSON.stringify(customs)) return; for (const k in customs) delete customs[k]; Object.assign(customs, c); touch(); },
     portfolioStats, inflationStats, bounds,
     /** Rentabilidad anual compuesta (precio, sin dividendos) entre el cierre de diciembre del año anterior a `range.from`
      *  y el cierre de diciembre de `range.to` (o el último dato si `to` es el año en curso). Si el fondo empieza más tarde,

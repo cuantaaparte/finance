@@ -226,9 +226,7 @@
 
     chart.render(res, state);
     renderKpis(res);
-    renderRisk(port, res);
-    renderStrategies();
-    renderScenarios();
+    scheduleHeavy(port, res); // riesgo, estrategias y supuestos guardados: se calculan al soltar el slider
     const st = data.status(), badge = $('#data-status');
     badge.textContent = st.mode === 'live' ? `En vivo (${st.count}/${config.FUNDS.filter(f => !f.custom).length})` : st.mode === 'saved' ? `Datos del ${st.date || 'archivo local'}` : 'Sin datos · estimados (reintentar)';
     badge.classList.toggle('live', st.mode !== 'none');
@@ -292,6 +290,21 @@
     $('#ter-info').textContent = data.terDate() ? `TER actualizados: ${data.terDate()}` : 'TER de referencia';
   }
 
+  /** Lo pesado (riesgo con 300 simulaciones y las 4 estrategias) se calcula cuando se deja de tocar: así sliders y datos responden al instante. */
+  let heavyTimer = 0, heavyArgs = null, heavyFirst = true;
+  function scheduleHeavy(port, res) {
+    heavyArgs = [port, res];
+    clearTimeout(heavyTimer);
+    if (heavyFirst) { heavyFirst = false; runHeavy(); return; }
+    $('#risk-total').classList.add('stale'); $('#strategies').classList.add('stale'); // se atenúan mientras se actualizan
+    heavyTimer = setTimeout(runHeavy, 140);
+  }
+  function runHeavy() {
+    const [port, res] = heavyArgs;
+    renderRisk(port, res); renderStrategies(); renderScenarios();
+    $('#risk-total').classList.remove('stale'); $('#strategies').classList.remove('stale');
+  }
+
   function renderRisk(port, res) {
     const r = finance.risk(state, port, res, rateOf, inputsOf(state)), el = $('#risk-total'), pc = x => (x * 100).toFixed(1).replace('.', ',') + ' %';
     el.textContent = `Riesgo: ${r.level} (${r.score}/100)`;
@@ -328,6 +341,7 @@
     $('#kpis').replaceChildren(...items.map(([l, v, c]) => h('div', { class: 'kpi ' + c }, h('small', {}, l), h('b', {}, v))));
   }
 
+  let stratCache = null, stratDomKey = null;
   function renderStrategies() {
     $$('#strat-base button').forEach(b => b.classList.toggle('on', b.dataset.sb === state.stratBase));
     const a = config.AVERAGE_PROFILE;
@@ -335,7 +349,11 @@
       ? `Calculadas con un perfil de salario medio (${eur.format(a.net)}/mes, ${a.workYears} años trabajando y ${a.retireYears} de jubilación); se mantienen tus fondos, inflación y comisiones.`
       : 'Calculadas con los datos que has introducido (tu sueldo, gastos, ahorro inicial y años).';
     const start = base || state, source = state.stratBase === 'avg' ? finance.averageProfile(start) : start;
-    $('#strategies').replaceChildren(...finance.strategies(source, rateOf, inputsOf).map(st =>
+    const hr = histRange(), key = JSON.stringify([source, hr.from, hr.to, data.status().count, data.status().mode, data.terDate()]); // lo que, si no cambia, deja las estrategias igual
+    if (!stratCache || stratCache.key !== key) stratCache = { key, list: finance.strategies(source, rateOf, inputsOf) };
+    if (stratDomKey === key + '|' + active) return;
+    stratDomKey = key + '|' + active;
+    $('#strategies').replaceChildren(...stratCache.list.map(st =>
       h('button', { type: 'button', class: 'strategy' + (st.id === active ? ' active' : ''), disabled: st.unavailable ? '' : null,
         onclick: () => { applyState(st.state); active = st.id; refresh(false); } },
         h('b', {}, st.title), h('p', {}, st.unavailable ? 'No es alcanzable con tus datos actuales.' : st.desc),
@@ -389,8 +407,12 @@
     saveScenarios(); renderScenarios(true);
   }
 
+  let scenarioSig = null;
   function renderScenarios(force = false) {
     if (editingId !== null && !force) return; // no pisar el campo mientras se escribe el nombre
+    const sig = JSON.stringify(scenarios);
+    if (!force && sig === scenarioSig) return; // la lista no cambió: no se reconstruye
+    scenarioSig = sig;
     const summary = sc => {
       const s = sc.state, m = s.period === 'year' ? 12 : 1, u = s.period === 'year' ? '/año' : '/mes';
       return `Neto ${eur.format(s.net * m)}${u} · invierte ${eur.format(s.invest * m)}${u} · inicial ${eur.format(s.initial)} · ${s.workYears} años · inflación ${s.inflation} % · histórico ${s.histFrom || s.histTo ? `${s.histFrom ?? '…'}–${s.histTo ?? 'hoy'}` : 'por defecto'} · bróker ${s.brokerFee} % · impuestos ${taxes.label(s.tax)} · `
