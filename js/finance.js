@@ -29,23 +29,40 @@
   }
 
   /** Rentabilidad nominal neta de comisiones (fondo + bróker), dividendos netos de impuestos y riesgo ponderado. */
+  function moveDrag(r, s, tau) {
+    // Régimen estable de un fondo del que cada año se vende la fracción s pagando `tau` sobre la ganancia (y se reinvierte lo que queda):
+    // devuelve cuánto resta al rendimiento anual (drag) y qué parte del valor son ganancias que pasan a ser coste (realize).
+    s = clamp(s, 0, 1);
+    if (!(s > 0 && tau > 0)) return { drag: 0, realize: 0 };
+    let b = 1; // coste ÷ valor
+    for (let i = 0; i < 300; i++) { const b1 = b / (1 + r), t = s * Math.max(0, 1 - b1) * tau; b = (b1 * (1 - s) + s - t) / (1 - t); }
+    const g = Math.max(0, 1 - b / (1 + r));
+    return { drag: s * g * tau, realize: s * g };
+  }
+
   function portfolio(s, rateOf) {
     const rows = Object.entries(s.alloc).map(([id, w]) => [config.FUNDS.find(f => f.id === id), w]).filter(([f]) => f);
-    const sum = rows.reduce((a, [, w]) => a + w, 0);
-    let price = -s.brokerFee / 100, div = 0, vol = 0;
+    const sum = rows.reduce((a, [, w]) => a + w, 0), def = App.taxes.resolve(s.tax);
+    const tau = (def.brackets[0].rate / 100) * (def.inclusion ?? 1) + def.social.reduce((a, x) => a + x.rate, 0) / 100; // tipo de las ganancias que se realizan al mover dinero
+    let price = -s.brokerFee / 100, div = 0, vol = 0, realize = 0;
     rows.forEach(([f, w]) => {
-      const k = sum > 0 ? w / sum : 1 / rows.length;
-      price += k * (rateOf(f).rate - providerOf(s, f).ter / 100);
+      const k = sum > 0 ? w / sum : 1 / rows.length, r = rateOf(f).rate - providerOf(s, f).ter / 100;
+      let drag = 0;
+      if (f.moves?.taxed && f.moves.perYear > 0 && f.moves.pct > 0) { // fondos personalizados que pagan impuestos al moverse
+        const mv = moveDrag(r, (f.moves.perYear * f.moves.pct) / 100, tau);
+        drag = mv.drag; realize += k * mv.realize * (1 - tau);
+      }
+      price += k * (r - drag);
       div += k * (f.yield / 100) * (1 - config.DIV_TAX);
       vol += k * f.vol; // aproximación: media ponderada (ignora correlaciones)
     });
-    return { price, total: price + div, vol };
+    return { price, total: price + div, vol, realize };
   }
 
   function simulate(s, p, opts = {}) { // opts.crash: caída (0-1) del capital justo al jubilarte
     const infl = s.inflation / 100, infM = Math.pow(1 + infl, 1 / 12); // inflación mensual
     const m = r => Math.pow((1 + r) / (1 + infl), 1 / 12) - 1; // tasa mensual real
-    const mP = m(p.price), mT = m(p.total), dM = Math.max(0, (p.total - p.price) / 12); // dM: dividendos (ya con impuestos) que se reinvierten
+    const mP = m(p.price), mT = m(p.total), dM = Math.max(0, (p.total - p.price) / 12) + (p.realize || 0) / 12; // dM: dividendos (ya con impuestos) que se reinvierten
     const T = App.taxes, def = T.resolve(s.tax), net = s.retNeeds + s.retLeisure;
     const grossAt = q => (net > 0 ? T.grossOf(def, net * 12, q) / 12 : 0); // bruto mensual que hay que sacar para cobrar `net` tras impuestos
     const gainShare = (t, b) => (t > 0 ? clamp(1 - b / t, 0, 1) : 0);     // parte del capital que es ganancia (coste medio)
@@ -131,7 +148,7 @@
     const market = inputs?.market || null, infl = inputs?.infl || null;
     const world = portfolio({ ...s, alloc: { VT: 100 }, prov: {} }, rateOf).total;
     const exp = Math.min(p.total, world), volEst = p.vol / 100;
-    const mc = monteCarlo(s, exp, market, infl, volEst, (p.total - p.price) / 12);
+    const mc = monteCarlo(s, exp, market, infl, volEst, (p.total - p.price) / 12 + (p.realize || 0) / 12);
     const score = Math.round(mc.score);
     const [, level, color] = LEVELS.find(l => score < l[0]);
     return { score, level, color, prob: mc.prob, exp, capped: p.total > world, vol: market ? market.vol : volEst,

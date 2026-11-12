@@ -179,3 +179,27 @@ button.ghost{background:transparent;color:var(--text);border:1px solid var(--lin
 #tax-body .note{margin:0 0 .5rem}
 .tax-tbl tr.sub th,.tax-tbl tr.sub td{color:var(--muted);font-weight:400;font-size:.72rem}
 .tax-row select{width:auto}
+
+/* ---- Fondos personalizados ---- */
+.tools-btns{display:flex;gap:.4rem;align-items:center}
+.tools .plus{font-size:1.05rem;line-height:1;padding:.15rem .6rem}
+.fund.custom{--cc:#2dd4bf;border-left:3px solid var(--cc);background:linear-gradient(90deg,rgba(45,212,191,.09),transparent 70%);padding-left:.45rem;margin-left:-.1rem;border-radius:0 8px 8px 0}
+.fund.custom .ret{color:var(--cc)}.fund.custom .ret.neg{color:var(--bad)}
+.cname{display:flex;align-items:center;gap:.4rem;flex-wrap:wrap}
+.cbadge{font-size:.62rem;color:#0b0f17;background:var(--cc);border-radius:99px;padding:.02rem .4rem;font-weight:600;white-space:nowrap}
+.csub,.cmoves{color:var(--muted);font-size:.68rem;line-height:1.25}
+.cbtns{display:flex;gap:.3rem;margin-top:.15rem}
+.cbtns button{background:transparent;color:var(--text);border:1px solid var(--line);border-radius:7px;padding:.05rem .45rem;font:inherit;font-size:.78rem;cursor:pointer}
+.cbtns button:hover{border-color:var(--cc);color:var(--cc)}.cbtns .cdel{color:var(--bad)}.cbtns .cdel:hover{border-color:var(--bad);color:var(--bad)}
+.cpanel{grid-column:1/-1;display:flex;flex-direction:column;gap:.35rem;padding:.4rem .2rem .2rem;border-top:1px dashed var(--line);margin-top:.2rem}.cpanel[hidden]{display:none}
+.cslide{display:grid;grid-template-columns:minmax(8rem,11rem) minmax(0,1fr) 4.8rem;align-items:center;gap:.5rem;font-size:.75rem;color:var(--muted)}
+.cslide input[type=range]{width:100%;margin:0;accent-color:var(--cc,#2dd4bf)}.cslide em{font-style:normal;color:var(--text);text-align:right}
+.fund-dlg{width:min(34rem,94vw)}
+#fund-body{padding:.7rem .8rem;overflow-y:auto}
+#fund-body .field input[type=range]{width:100%}
+#fund-body .field>label em{color:var(--text)}
+#fund-body .check input{flex:none}
+.dlg-btns{justify-content:flex-end;margin-top:.8rem}
+.fd-field .pair input[type=number]{width:5.5rem}
+.fd-field .muted{display:block;font-size:.68rem;margin-top:.1rem}
+.fd-r{margin-left:auto}

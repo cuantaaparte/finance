@@ -33,6 +33,7 @@
       if (k in ENUMS) out[k] = ENUMS[k].includes(v) ? v : d;
       else if (k === 'histFrom' || k === 'histTo') out[k] = Number.isInteger(v) && v >= 1900 && v <= 2100 ? v : null;
       else if (k === 'touched') out[k] = { needs: !!(isObj(v) && v.needs), leisure: !!(isObj(v) && v.leisure) };
+      else if (k === 'customFunds') out.customFunds = App.customFunds.clean(src.customFunds); // fondos personalizados
       else if (k === 'tax') out.tax = App.taxes.clean(src.tax); // país o tramos personalizados (se validan en taxes.js)
       else if (k === 'alloc' || k === 'prov') continue; // se tratan después
       else if (typeof d === 'boolean') out[k] = typeof v === 'boolean' ? v : d;
@@ -40,11 +41,12 @@
     }
     // Reparto: solo fondos que existen, con pesos entre 0 y 100; si no queda ninguno, el reparto por defecto.
     const alloc = {};
-    if (isObj(src.alloc)) config.FUNDS.forEach(f => { const w = src.alloc[f.id]; if (Number.isFinite(w)) alloc[f.id] = Math.min(100, Math.max(0, w)); });
+    const funds = [...config.FUNDS.filter(f => !f.custom), ...out.customFunds.map(d => App.customFunds.build(d))]; // los del catálogo y los personalizados del propio supuesto
+    if (isObj(src.alloc)) funds.forEach(f => { const w = src.alloc[f.id]; if (Number.isFinite(w)) alloc[f.id] = Math.min(100, Math.max(0, w)); });
     out.alloc = Object.keys(alloc).length ? alloc : structuredClone(D.alloc);
     // Gestor de cada fondo: solo uno de los gestores reales de ese fondo.
     out.prov = {};
-    if (isObj(src.prov)) config.FUNDS.forEach(f => { const p = src.prov[f.id]; if (typeof p === 'string' && f.providers.some(x => x.id === p)) out.prov[f.id] = p; });
+    if (isObj(src.prov)) funds.forEach(f => { const p = src.prov[f.id]; if (typeof p === 'string' && f.providers.some(x => x.id === p)) out.prov[f.id] = p; });
     return finance.normalize(out);
   }
 

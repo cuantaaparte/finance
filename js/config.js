@@ -47,6 +47,7 @@
     hideCosts: true,     // true: la cifra de cada fondo NO descuenta inflación ni TER; false: se muestra ya descontada (solo cambia lo que se muestra)
     stratBase: 'avg', // punto de partida de las estrategias: 'avg' (salario medio) | 'mine' (tus datos)
     retBasis: 'net',  // el importe "Ingresos de la inversión" se introduce en 'net' (tras impuestos) o 'gross' (bruto)
+    customFunds: [],  // fondos personalizados (ver customFunds.js)
     tax: { country: 'ES', scale: null, custom: null }, // impuestos de la jubilación: país (data/tax-data.js) o 'CUSTOM' con tramos propios
   };
 

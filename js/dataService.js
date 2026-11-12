@@ -4,7 +4,7 @@
   'use strict';
   const { config, storage } = App;
   const YEAR = 31557600, STALE_MS = 14 * 864e5; // segundos / ms
-  const series = {}, liveIds = new Set();
+  const series = {}, liveIds = new Set(), customs = {}; // customs: fondos personalizados (ver customFunds.js)
   let snapDate = null, terDate = null;
 
   const monthKey = t => { const d = new Date(t * 1000); return d.getUTCFullYear() * 12 + d.getUTCMonth(); };
@@ -70,7 +70,28 @@
     } catch { /* se queda lo que hubiera (archivo local o estimación) */ }
   }
 
+  /** Ruido gaussiano reproducible para cada fondo inventado y cada mes (así el histórico simulado no cambia entre pintados). */
+  function noise(seed, key) {
+    let a = (seed ^ Math.imul(key, 0x9E3779B1)) >>> 0;
+    const next = () => { a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+    return Math.sqrt(-2 * Math.log(next() || 1e-9)) * Math.cos(2 * Math.PI * next());
+  }
+
+  /** Rentabilidades mensuales de un fondo personalizado. Imitado: las del fondo real con tus cambios (rentabilidad desplazada, volatilidad escalada;
+   *  sin cambios son idénticas). Inventado: se simula a partir del mercado global con su rentabilidad, volatilidad y correlación. */
+  function customReturns(c, years) {
+    const refId = c.base || ['VT', 'URTH', 'ACWI', 'SPY'].find(r => series[r]?.length > 12);
+    const m = refId ? monthlyReturns(refId, years) : null;
+    if (!m) return null;
+    const v = [...m.values()], mean = v.reduce((a, x) => a + x, 0) / v.length, out = new Map();
+    if (c.base) { for (const [k, r] of m) out.set(k, Math.max(-0.99, mean + (r - mean) * c.volScale + c.shift)); return out; }
+    const sd = sdOf(v) || 1e-9, mc = Math.pow(1 + c.rate, 1 / 12) - 1, sc = c.vol / Math.sqrt(12), idio = Math.sqrt(Math.max(0, 1 - c.corr * c.corr));
+    for (const [k, r] of m) out.set(k, Math.max(-0.99, mc + c.corr * ((r - mean) / sd) * sc + idio * sc * noise(c.seed, k)));
+    return out;
+  }
+
   function monthlyReturns(id, years) {
+    if (customs[id]) return customReturns(customs[id], years);
     const s = series[id];
     if (!s || s.length < 13) return null;
     const from = s[s.length - 1][0] - years * YEAR, out = new Map();
@@ -127,13 +148,14 @@
   applyLocalFiles();
 
   App.data = {
-    loadAll: (force = false) => Promise.allSettled(config.FUNDS.map(f => load(f, force))),
+    loadAll: (force = false) => Promise.allSettled(config.FUNDS.filter(f => !f.custom).map(f => load(f, force))), // los personalizados no se descargan
     /** mode: 'live' (descargado ahora), 'saved' (archivo local, con fecha) o 'none' (estimaciones). */
     status() {
       const mode = liveIds.size ? 'live' : Object.keys(series).length ? 'saved' : 'none';
       return { mode, count: liveIds.size, date: snapDate ? new Date(snapDate).toLocaleDateString('es-ES') : null };
     },
     terDate: () => terDate,
+    setCustom: c => { for (const k in customs) delete customs[k]; Object.assign(customs, c); },
     portfolioStats, inflationStats, bounds,
     /** Rentabilidad anual compuesta (precio, sin dividendos) entre el cierre de diciembre del año anterior a `range.from`
      *  y el cierre de diciembre de `range.to` (o el último dato si `to` es el año en curso). Si el fondo empieza más tarde,

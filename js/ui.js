@@ -1,7 +1,7 @@
 /* Interfaz: genera formularios desde el esquema, enlaza eventos y pinta resultados. */
 (function (App) {
   'use strict';
-  const { config, storage, finance, data, chart, scenarioCode, taxes } = App;
+  const { config, storage, finance, data, chart, scenarioCode, taxes, customFunds } = App;
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
   const eur = new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 });
@@ -15,6 +15,7 @@
   if (!Object.keys(state.alloc || {}).length) state.alloc = { ...config.DEFAULT_STATE.alloc };
   state.prov = state.prov || {};
   state.tax = taxes.clean(state.tax); // impuestos guardados: se validan al abrir
+  state.customFunds = customFunds.clean(state.customFunds); // fondos personalizados guardados
   if (!['net', 'gross'].includes(state.retBasis)) state.retBasis = 'net';
   delete state.histYears; // ajuste antiguo (años hacia atrás), sustituido por histFrom/histTo
   let base = null;          // últimos datos introducidos por el usuario: de aquí salen las estrategias
@@ -97,7 +98,9 @@
       h('label', { class: 'switch fswitch', title: 'Activado: la cifra no descuenta ni la inflación ni el TER. Desactivado: se le resta la inflación que has elegido y el TER de cada fondo (cifra real, en € de hoy).' },
         h('input', { type: 'checkbox', 'data-key': 'hideCosts' }), h('i'), h('span', {}, 'Ocultar inflación y TER'))));
     box.append(h('div', { class: 'tools' }, h('small', { id: 'ter-info' }),
-      h('button', { type: 'button', onclick: () => { config.FUNDS.forEach(f => { state.prov[f.id] = finance.cheapest(f).id; }); refresh(); } }, 'Gestor más barato')));
+      h('span', { class: 'tools-btns' },
+        h('button', { type: 'button', class: 'plus', title: 'Añadir un fondo personalizado', 'aria-label': 'Añadir fondo personalizado', onclick: () => openFundDialog() }, '+'),
+        h('button', { type: 'button', onclick: () => { config.FUNDS.forEach(f => { state.prov[f.id] = finance.cheapest(f).id; }); refresh(); } }, 'Gestor más barato'))));
     box.append(h('p', { class: 'fnote', id: 'funds-note' }));
     config.FUNDS.forEach(f => box.append(h('div', { class: 'fund', 'data-fund': f.id },
       h('input', { type: 'checkbox', id: 'f-' + f.id, 'data-fcheck': f.id }),
@@ -106,9 +109,15 @@
       h('div', { class: 'rcell' }, h('span', { class: 'ret' }), h('small', { class: 'ter' })),
       h('input', { type: 'number', min: 0, max: 100, step: 'any', 'data-fw': f.id }),
       h('span', { class: 'suf' }, '%'))));
+    box.append(h('div', { id: 'custom-funds' }));
     box.append(h('div', { class: 'total-row' }, h('div', { class: 'total', id: 'alloc-total' }), h('div', { class: 'total', id: 'risk-total' })));
     box.addEventListener('input', e => {
-      const c = e.target.dataset.fcheck, w = e.target.dataset.fw, p = e.target.dataset.fprov;
+      const c = e.target.dataset.fcheck, w = e.target.dataset.fw, p = e.target.dataset.fprov, cy = e.target.dataset.cperyear, cp = e.target.dataset.cpct;
+      if (cy || cp) { // sliders de movimientos de un fondo personalizado
+        const d = state.customFunds.find(x => x.id === (cy || cp)); if (!d) return;
+        if (cy) d.perYear = Math.round(parseFloat(e.target.value) || 0); else d.pct = parseFloat(e.target.value) || 0;
+        refresh(); return;
+      }
       if (c) {
         if (e.target.checked) state.alloc[c] = Math.max(0, 100 - sumAlloc());
         else if (Object.keys(state.alloc).length > 1) delete state.alloc[c];
@@ -116,6 +125,13 @@
       else if (p) state.prov[p] = e.target.value;
       else return;
       refresh();
+    });
+    box.addEventListener('click', e => { // botones de las filas personalizadas
+      const b = e.target.closest('[data-cact]'); if (!b) return;
+      const id = b.dataset.cid, a = b.dataset.cact;
+      if (a === 'toggle') { if (openCustom.has(id)) openCustom.delete(id); else openCustom.add(id); refresh(false); }
+      else if (a === 'edit') openFundDialog(id);
+      else if (a === 'del') deleteFund(id);
     });
     return box;
   }
@@ -187,6 +203,7 @@
 
   /* ---------- Pintado ---------- */
   function render() {
+    customFunds.sync(state.customFunds, rateOf); // los fondos personalizados entran en el catálogo antes de simular
     const port = finance.portfolio(state, rateOf), res = finance.simulate(state, port);
     lastRes = res;
     $$('[data-key]').forEach(el => {
@@ -213,7 +230,7 @@
     renderStrategies();
     renderScenarios();
     const st = data.status(), badge = $('#data-status');
-    badge.textContent = st.mode === 'live' ? `En vivo (${st.count}/${config.FUNDS.length})` : st.mode === 'saved' ? `Datos del ${st.date || 'archivo local'}` : 'Sin datos · estimados (reintentar)';
+    badge.textContent = st.mode === 'live' ? `En vivo (${st.count}/${config.FUNDS.filter(f => !f.custom).length})` : st.mode === 'saved' ? `Datos del ${st.date || 'archivo local'}` : 'Sin datos · estimados (reintentar)';
     badge.classList.toggle('live', st.mode !== 'none');
     if ($('#tax-dlg').open) updateTaxPreview();
   }
@@ -221,7 +238,7 @@
   /** Aviso (vacío = todo bien) cuando a algún fondo elegido le faltan datos en el periodo seleccionado. */
   function histWarning() {
     if (data.status().mode === 'none') return 'Sin datos reales: la rentabilidad es una estimación fija y no cambia con los años.';
-    const selected = Object.keys(state.alloc).map(id => config.FUNDS.find(x => x.id === id)).filter(Boolean);
+    const selected = Object.keys(state.alloc).map(id => config.FUNDS.find(x => x.id === id)).filter(f => f && !f.custom);
     const partial = selected.map(f => [f, rateOf(f)]).filter(([, r]) => !r.live || r.lateBy > 3);
     return partial.length ? `Sin histórico completo en este periodo: ${partial.map(([f, r]) => r.live ? `${f.name} (datos desde ${Math.floor(r.startKey / 12)})` : `${f.name} (sin datos: estimación fija)`).join(', ')}. Se usa el máximo disponible.` : '';
   }
@@ -252,6 +269,7 @@
       : `Cifra de cada fondo: rentabilidad anual media del índice en el periodo elegido, en € nominales y sin dividendos. En la simulación se le resta a cada fondo la inflación que has elegido (${infl} %), además del TER y la comisión del bróker, y se le suma su dividendo.`;
     else note = `Cifra de cada fondo: rentabilidad anual media del índice en el periodo elegido, ${divOn ? 'con dividendos (subida del precio más el dividendo bruto del fondo)' : 'sin dividendos'}, ya descontados el TER de su gestor y la inflación que has elegido (${infl} %), es decir, en € de hoy. La simulación además resta la comisión del bróker (${brk} %)${divOn ? `; el dividendo se cuenta una sola vez, después de impuestos (${tax} %)` : ' y le suma su dividendo'}.`;
     $('#funds-note').textContent = note;
+    renderCustomRows();
     $$('.fund').forEach(row => {
       const f = config.FUNDS.find(x => x.id === row.dataset.fund), on = f.id in state.alloc, r = rateOf(f);
       const dy = divOn ? f.yield / 100 : 0, terPct = finance.providerOf(state, f).ter, terTxt = String(terPct).replace('.', ',') + ' %';
@@ -259,14 +277,14 @@
       if (!hideOn) shownRate = (1 + shownRate - terPct / 100) / (1 + inflRate) - 1; // sin ocultar: misma cuenta que la simulación (TER del gestor y luego inflación)
       $('[data-fcheck]', row).checked = on;
       const sel = $('select', row);
-      $$('option', sel).forEach((o, i) => { const p = f.providers[i]; o.textContent = `${p.name} · TER ${p.ter} %`; });
-      sel.value = finance.providerOf(state, f).id; sel.disabled = !on;
+      if (sel) { $$('option', sel).forEach((o, i) => { const p = f.providers[i]; o.textContent = `${p.name} · TER ${p.ter} %`; }); sel.value = finance.providerOf(state, f).id; sel.disabled = !on; }
       const w = $('[data-fw]', row); w.disabled = !on;
       if (document.activeElement !== w) w.value = on ? round(state.alloc[f.id]) : '';
       const ret = $('.ret', row); ret.textContent = pct(shownRate); ret.classList.toggle('neg', shownRate < 0);
       const costs = hideOn ? 'sin descontar inflación ni TER' : `descontados el TER (${terTxt}) y la inflación (${infl} %): (1 + rentabilidad − TER) ÷ (1 + inflación) − 1`;
       ret.title = (r.live ? `Rentabilidad anual media del índice entre ${mLabel(r.startKey)} y ${mLabel(r.endKey)} (${fmtYears(r.span)}): precio ${pct(r.rate)}${divOn ? ` + dividendo bruto ${pct(dy)}` : ', sin dividendos'}` : 'Estimación fija (sin datos reales en este periodo)') + '; ' + costs;
       $('.ter', row).textContent = 'TER ' + String(finance.providerOf(state, f).ter).replace('.', ',') + ' %';
+      if (f.custom) updateCustomRow(row, f);
     });
     const t = sumAlloc(), el = $('#alloc-total');
     el.textContent = `Reparto: ${round(t, 1)} %` + (Math.abs(t - 100) > 0.1 ? ' (se normaliza a 100 %)' : '');
@@ -539,6 +557,167 @@
     });
   }
 
+  /* ---------- Fondos personalizados ---------- */
+  const openCustom = new Set(); // filas desplegadas
+  let customSig = null, draft = null, draftStep = 1, fundEditId = null, taxedTouched = false;
+  const comma = (v, d = 2) => String(round(v, d)).replace('.', ',');
+  const baseName = d => d.mimic && config.FUNDS.find(x => x.id === d.mimic.fund)?.name;
+
+  /** Filas de los fondos personalizados (se reconstruyen solo cuando cambia la lista, el nombre o a quién imitan). */
+  function renderCustomRows() {
+    const sig = JSON.stringify(state.customFunds.map(d => [d.id, d.name, d.kind, d.mimic?.fund || '']));
+    if (sig === customSig) return;
+    customSig = sig;
+    $('#custom-funds').replaceChildren(...state.customFunds.map(customRow));
+  }
+
+  function customRow(d) {
+    const slider = (label, key, max, step) => h('label', { class: 'cslide' }, h('span', {}, label), h('input', { type: 'range', min: 0, max, step, [`data-${key}`]: d.id }), h('em', { 'data-out': key }));
+    return h('div', { class: 'fund custom', 'data-fund': d.id, 'data-custom': '1' },
+      h('input', { type: 'checkbox', id: 'f-' + d.id, 'data-fcheck': d.id }),
+      h('div', { class: 'fmain' },
+        h('div', { class: 'cname' }, h('b', {}, d.name), h('span', { class: 'cbadge' }, d.kind === 'etf' ? 'ETF' : 'Fondo indexado')),
+        h('small', { class: 'csub' }), h('small', { class: 'cmoves' }),
+        h('div', { class: 'cbtns' },
+          h('button', { type: 'button', 'data-cact': 'toggle', 'data-cid': d.id, title: 'Mostrar / ocultar movimientos' }, '▾'),
+          h('button', { type: 'button', 'data-cact': 'edit', 'data-cid': d.id, title: 'Editar fondo' }, '✎'),
+          h('button', { type: 'button', 'data-cact': 'del', 'data-cid': d.id, title: 'Borrar fondo', class: 'cdel' }, '✕'))),
+      h('div', { class: 'rcell' }, h('span', { class: 'ret' }), h('small', { class: 'ter' })),
+      h('input', { type: 'number', min: 0, max: 100, step: 'any', 'data-fw': d.id }),
+      h('span', { class: 'suf' }, '%'),
+      h('div', { class: 'cpanel', hidden: '' }, slider('Movimientos al año', 'cperyear', 12, 1), slider('% del fondo que mueves cada vez', 'cpct', 100, 1)));
+  }
+
+  function updateCustomRow(row, f) {
+    const d = state.customFunds.find(x => x.id === f.id); if (!d) return;
+    const m = f.moves, bn = baseName(d), open = openCustom.has(d.id);
+    $('.csub', row).textContent = bn ? `Personalizado · imita a ${bn}` : 'Personalizado · fondo inventado';
+    $('.cmoves', row).textContent = m.perYear > 0 && m.pct > 0 ? `${m.perYear} mov./año · mueve el ${comma(m.pct, 1)} % · ${m.taxed ? 'con impuestos' : 'sin impuestos'}` : 'Sin movimientos';
+    $('.cpanel', row).hidden = !open; $('[data-cact="toggle"]', row).textContent = open ? '▴' : '▾';
+    [['cperyear', m.perYear, v => `${v} al año`], ['cpct', m.pct, v => `${comma(v, 1)} %`]].forEach(([k, v, fmt]) => {
+      const inp = $(`[data-${k}]`, row); if (document.activeElement !== inp) inp.value = v;
+      $(`[data-out="${k}"]`, row).textContent = fmt(v);
+    });
+    $('.ret', row).title = bn ? `Igual que ${bn}${Object.keys(d.vals || {}).length ? ', con tus cambios' : ''}` : 'Rentabilidad que has indicado para este fondo (subida del precio' + (state.showDividends !== false ? ' + dividendo bruto)' : ')');
+  }
+
+  /* --- Ventana de añadir / editar --- */
+  function openFundDialog(id) {
+    const cur = id ? state.customFunds.find(x => x.id === id) : null;
+    fundEditId = cur ? cur.id : null;
+    draft = cur ? structuredClone(cur) : customFunds.blank(new Set(state.customFunds.map(x => x.id)));
+    taxedTouched = !!cur; draftStep = 1;
+    renderFundDlg();
+    const dlg = $('#fund-dlg'); if (!dlg.open) dlg.showModal();
+  }
+
+  function renderFundDlg() {
+    $('#fund-title').textContent = (fundEditId ? 'Editar fondo personalizado' : 'Añadir fondo personalizado') + ` · paso ${draftStep} de 2`;
+    $('#fund-body').replaceChildren(draftStep === 1 ? fundStepOne() : fundStepTwo());
+  }
+
+  const segBtns = (opts, cur, pick) => h('div', { class: 'seg' }, ...opts.map(([v, l]) => h('button', { type: 'button', class: v === cur ? 'on' : '', onclick: () => pick(v) }, l)));
+  const dSlider = (label, key, min, max, step, fmt) => h('div', { class: 'field' },
+    h('label', {}, label, h('em', { 'data-dout': key }, fmt(draft[key]))), h('input', { type: 'range', min, max, step, value: draft[key], 'data-d': key }));
+  const FMT = { perYear: v => (v === 0 ? 'ninguno' : `${v} al año`), pct: v => `${comma(v, 1)} %` };
+
+  function fundStepOne() {
+    const bases = customFunds.baseFunds(), b = draft.mimic ? bases.find(f => f.id === draft.mimic.fund) : null;
+    const taxed = h('input', { type: 'checkbox', 'data-d': 'taxed', checked: draft.taxed ? '' : null });
+    const baseSel = h('select', { 'data-d': 'mimicFund', 'aria-label': 'Fondo al que imita' }, ...bases.map(f => h('option', { value: f.id }, f.name)));
+    const provSel = b ? h('select', { 'data-d': 'mimicProv', 'aria-label': 'Gestor' }, ...b.providers.map(p => h('option', { value: p.id }, `${p.name} · TER ${comma(p.ter)} %`))) : null;
+    if (b) { baseSel.value = b.id; provSel.value = draft.mimic.prov; }
+    return h('div', {},
+      h('div', { class: 'field' }, h('label', {}, 'Nombre'), h('input', { type: 'text', maxlength: 40, placeholder: 'Fondo personalizado', value: draft.name, 'data-d': 'name' })),
+      h('div', { class: 'field' }, h('label', {}, 'Tipo'), segBtns([['index', 'Fondo indexado'], ['etf', 'ETF']], draft.kind, v => { draft.kind = v; if (!taxedTouched) draft.taxed = v === 'etf'; renderFundDlg(); })),
+      h('p', { class: 'note' }, 'En España, mover dinero entre fondos indexados no paga impuestos; vender un ETF sí.'),
+      dSlider('Movimientos entre fondos al año', 'perYear', 0, 12, 1, FMT.perYear),
+      dSlider('% del fondo que mueves de media cada vez', 'pct', 0, 100, 1, FMT.pct),
+      h('label', { class: 'check' }, taxed, 'Se pagan impuestos en estos movimientos'),
+      h('div', { class: 'field' }, h('label', {}, '¿Imita a un fondo de la aplicación?'),
+        segBtns([['no', 'No'], ['yes', 'Sí']], draft.mimic ? 'yes' : 'no', v => {
+          if (v === 'yes' && !draft.mimic) { const f0 = bases[0]; draft.mimic = { fund: f0.id, prov: finance.cheapest(f0).id }; draft.vals = {}; }
+          else if (v === 'no' && draft.mimic) { draft.mimic = null; draft.vals = { ...customFunds.DEFAULTS }; }
+          renderFundDlg();
+        })),
+      draft.mimic ? h('div', { class: 'tax-row' }, h('label', {}, 'Fondo', baseSel), h('label', {}, 'Gestor', provSel)) : null,
+      h('div', { class: 'tax-row dlg-btns' }, h('button', { type: 'button', class: 'btn ghost', 'data-fa': 'cancel' }, 'Cancelar'), h('button', { type: 'button', class: 'btn', 'data-fa': 'next' }, 'Continuar')));
+  }
+
+  const FIELDS = [ // datos del fondo (paso 2)
+    { k: 'rate', label: 'Rentabilidad anual media', hint: 'Subida del precio, sin dividendos, en € nominales.', min: -5, max: 20, step: 0.1, unit: '%' },
+    { k: 'yield', label: 'Dividendo anual bruto', hint: 'Lo que reparte el fondo cada año (o reinvierte, si acumula).', min: 0, max: 8, step: 0.1, unit: '%' },
+    { k: 'ter', label: 'TER (comisión anual)', hint: 'Gastos corrientes del fondo.', min: 0, max: 2, step: 0.01, unit: '%' },
+    { k: 'vol', label: 'Volatilidad anual', hint: 'Cuánto oscila el valor: la renta variable global ronda el 15 %, los bonos el 5 %.', min: 1, max: 40, step: 0.5, unit: '%' },
+    { k: 'corr', label: 'Correlación con la renta variable global', hint: 'Diversificación: cuanto más baja, más se mueve distinto del mercado y menos riesgo añade a la cartera.', min: -0.5, max: 1, step: 0.05, unit: '', mimicHidden: true },
+  ];
+
+  function fundStepTwo() {
+    const e = customFunds.effective(draft, rateOf), mim = !!draft.mimic;
+    const rows = FIELDS.filter(f => !(mim && f.mimicHidden)).map(f => {
+      const v = e[f.k], changed = mim && draft.vals[f.k] != null;
+      return h('div', { class: 'field fd-field' },
+        h('label', {}, f.label, h('span', { class: 'fd-r' }, changed ? h('button', { type: 'button', class: 'link', 'data-fa': 'reset', 'data-k': f.k, title: 'Volver al valor del fondo imitado' }, '↺ restablecer') : null)),
+        h('div', { class: 'pair' }, h('input', { type: 'range', min: f.min, max: f.max, step: f.step, value: v, 'data-fv': f.k, 'data-r': 1 }),
+          h('input', { type: 'number', step: 'any', value: round(v, 3), 'data-fv': f.k }), h('span', { class: 'suf' }, f.unit)),
+        h('small', { class: 'muted' }, f.hint));
+    });
+    const b = e.base;
+    return h('div', {},
+      h('p', { class: 'note' }, mim ? `Parte de ${b.name} (${e.provider.name}). Cambia solo lo que quieras: lo demás sigue igual que el fondo original${b ? ', incluida su rentabilidad del periodo de histórico elegido' : ''}.` : 'Valores típicos de un fondo de renta variable global. Ajústalos como quieras: con ellos se calculan el gráfico y el riesgo.'),
+      ...rows,
+      h('div', { class: 'tax-row dlg-btns' }, h('button', { type: 'button', class: 'btn ghost', 'data-fa': 'back' }, 'Atrás'), h('button', { type: 'button', class: 'btn', 'data-fa': 'save' }, 'Guardar')));
+  }
+
+  function saveFund() {
+    const n = fundEditId ? state.customFunds.findIndex(x => x.id === fundEditId) + 1 : state.customFunds.length + 1;
+    const d = customFunds.clean([{ ...draft, name: (draft.name || '').trim() || `Fondo personalizado ${n}` }])[0];
+    if (!d) return;
+    if (fundEditId) state.customFunds = state.customFunds.map(x => (x.id === fundEditId ? d : x));
+    else state.customFunds.push(d);
+    $('#fund-dlg').close(); refresh();
+  }
+
+  function deleteFund(id) {
+    const d = state.customFunds.find(x => x.id === id); if (!d || !confirm(`¿Borrar «${d.name}»?`)) return;
+    state.customFunds = state.customFunds.filter(x => x.id !== id);
+    delete state.alloc[id]; delete state.prov[id]; openCustom.delete(id);
+    if (!Object.keys(state.alloc).length) state.alloc = { ...config.DEFAULT_STATE.alloc };
+    refresh();
+  }
+
+  function initFundDlg() {
+    const dlg = $('#fund-dlg'), body = $('#fund-body');
+    $('#fund-close').addEventListener('click', () => dlg.close());
+    dlg.addEventListener('click', e => { if (e.target === dlg) dlg.close(); });
+    body.addEventListener('input', e => {
+      const el = e.target, dk = el.dataset.d, fv = el.dataset.fv;
+      if (dk === 'name') draft.name = el.value;
+      else if (dk === 'perYear' || dk === 'pct') { draft[dk] = parseFloat(el.value) || 0; $(`[data-dout="${dk}"]`, body).textContent = FMT[dk](draft[dk]); }
+      else if (dk === 'taxed') { draft.taxed = el.checked; taxedTouched = true; }
+      else if (fv) {
+        const v = parseFloat(el.value); if (!Number.isFinite(v)) return;
+        const lim = customFunds.LIMITS[fv]; draft.vals[fv] = Math.min(lim[1], Math.max(lim[0], v));
+        $$(`[data-fv="${fv}"]`, body).forEach(o => { if (o !== el) o.value = el.type === 'range' ? round(draft.vals[fv], 3) : draft.vals[fv]; });
+        if (draft.mimic && !$(`[data-fa="reset"][data-k="${fv}"]`, body)) { const lab = el.closest('.fd-field').querySelector('.fd-r'); lab.replaceChildren(h('button', { type: 'button', class: 'link', 'data-fa': 'reset', 'data-k': fv, title: 'Volver al valor del fondo imitado' }, '↺ restablecer')); }
+      }
+    });
+    body.addEventListener('change', e => {
+      const el = e.target, dk = el.dataset.d;
+      if (dk === 'mimicFund') { const f0 = customFunds.baseFunds().find(f => f.id === el.value); draft.mimic = { fund: f0.id, prov: finance.cheapest(f0).id }; draft.vals = {}; renderFundDlg(); }
+      else if (dk === 'mimicProv') draft.mimic.prov = el.value;
+    });
+    body.addEventListener('click', e => {
+      const b = e.target.closest('[data-fa]'); if (!b) return;
+      const a = b.dataset.fa;
+      if (a === 'cancel') dlg.close();
+      else if (a === 'next') { if (!draft.name.trim()) draft.name = ''; draftStep = 2; renderFundDlg(); }
+      else if (a === 'back') { draftStep = 1; renderFundDlg(); }
+      else if (a === 'save') saveFund();
+      else if (a === 'reset') { delete draft.vals[b.dataset.k]; renderFundDlg(); }
+    });
+  }
+
   function init() {
     buildInputs();
     $('#app-version').textContent = config.VERSION ? 'Versión ' + config.VERSION : '';
@@ -548,6 +727,7 @@
     new ResizeObserver(syncHead).observe(head); syncHead();
     chart.init($('#chart'), $('#tip'));
     initTax();
+    initFundDlg();
     document.addEventListener('input', e => { const el = e.target.closest('[data-key]'); if (el) set(el.dataset.key, el); });
     document.addEventListener('input', e => { if (e.target.dataset?.hist) onHist(e.target.dataset.hist, e.target, false); });
     document.addEventListener('change', e => { if (e.target.dataset?.hist) onHist(e.target.dataset.hist, e.target, true); });
