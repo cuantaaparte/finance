@@ -20,7 +20,8 @@
 
   /** Convierte un supuesto {name, state} en un código de una sola línea. */
   function encode(sc) {
-    const data = toB64(new TextEncoder().encode(JSON.stringify({ v: VERSION, name: sc.name, state: sc.state })));
+    const used = sc.state.alloc || {}, state = { ...sc.state, customFunds: (sc.state.customFunds || []).filter(d => d.id in used) }; // solo viajan los fondos personalizados marcados, aunque estén al 0 %
+    const data = toB64(new TextEncoder().encode(JSON.stringify({ v: VERSION, name: sc.name, state })));
     return `${PREFIX}:${hash(data)}:${data.length}:${data}`;
   }
 

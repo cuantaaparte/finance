@@ -80,5 +80,5 @@
     App.data.setCustom(series);
   }
 
-  App.customFunds = { DEFAULTS, LIMITS, KEYS, baseFunds, blank, effective, build, clean, sync };
+  App.customFunds = { DEFAULTS, LIMITS, KEYS, baseFunds, newId, blank, effective, build, clean, sync };
 })(window.App = window.App || {});

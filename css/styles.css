@@ -29,7 +29,7 @@ h1{font-size:1.05rem;margin:0}h2{font-size:.95rem;margin:0 0 .6rem;color:var(--a
 .kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.4rem}
 .kpi{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:.35rem .55rem;min-width:0}
 .kpi small{color:var(--muted);display:block;font-size:.62rem;line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.kpi b{font-size:.9rem}.kpi.bad b{color:var(--bad)}.kpi.ok b{color:var(--ok)}
+.kpi b{font-size:.9rem}.kpi.bad b{color:var(--bad)}.kpi.ok b{color:var(--ok)}.kpi.warn b{color:#fb923c}
 .chart-card{display:flex;flex-direction:column;padding:.5rem .6rem}
 .legend{display:flex;flex-wrap:wrap;gap:.2rem .8rem;align-items:center;margin-bottom:.3rem;font-size:.78rem}
 .legend label{display:flex;align-items:center;gap:.3rem;cursor:pointer}
@@ -177,8 +177,12 @@ button.ghost{background:transparent;color:var(--text);border:1px solid var(--lin
 .tax-tbl tr.sub th,.tax-tbl tr.sub td{color:var(--muted);font-weight:400;font-size:.72rem}
 
 /* ---- Fondos personalizados ---- */
-.tools-btns{display:flex;gap:.4rem;align-items:center}
-.tools .plus{font-size:1.05rem;line-height:1;padding:.15rem .6rem}
+.tools-btns{display:flex;gap:.4rem;align-items:stretch}
+/* El + es del mismo alto que «Gestor más barato» (align-items:stretch) y se dibuja con dos barras centradas, sin depender de la tipografía */
+.tools .plus{position:relative;min-width:2.5rem;padding:0}
+.tools .plus::before,.tools .plus::after{content:"";position:absolute;left:50%;top:50%;background:currentColor;border-radius:1px;transform:translate(-50%,-50%)}
+.tools .plus::before{width:.8rem;height:2px}
+.tools .plus::after{width:2px;height:.8rem}
 .fund.custom{--cc:#2dd4bf;border-left:3px solid var(--cc);background:linear-gradient(90deg,rgba(45,212,191,.09),transparent 70%);padding-left:.45rem;margin-left:-.1rem;border-radius:0 8px 8px 0}
 .fund.custom .ret{color:var(--cc)}.fund.custom .ret.neg{color:var(--bad)}
 .cname{display:flex;align-items:center;gap:.4rem;flex-wrap:wrap}
@@ -204,3 +208,4 @@ button.ghost{background:transparent;color:var(--text);border:1px solid var(--lin
 #risk-total,#strategies{transition:opacity .15s}
 #risk-total.stale,#strategies.stale{opacity:.55}
 .cchk{margin:.1rem 0 0;font-size:.75rem}.chint{color:var(--muted);font-size:.68rem}.chint[hidden]{display:none}
+.fd-basis{display:flex;flex-wrap:wrap;gap:.15rem 1rem;margin:.3rem 0 .1rem}.fd-basis .check{margin:0;font-size:.76rem}
