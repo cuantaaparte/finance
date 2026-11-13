@@ -33,6 +33,7 @@
       if (k in ENUMS) out[k] = ENUMS[k].includes(v) ? v : d;
       else if (k === 'histFrom' || k === 'histTo') out[k] = Number.isInteger(v) && v >= 1900 && v <= 2100 ? v : null;
       else if (k === 'touched') out[k] = { needs: !!(isObj(v) && v.needs), leisure: !!(isObj(v) && v.leisure) };
+      else if (k === 'retGross') out[k] = Number.isFinite(v) && v >= 0 ? Math.min(1e7, v) : null;
       else if (k === 'customFunds') out.customFunds = App.customFunds.clean(src.customFunds); // fondos personalizados
       else if (k === 'tax') out.tax = App.taxes.clean(src.tax); // país o tramos personalizados (se validan en taxes.js)
       else if (k === 'alloc' || k === 'prov') continue; // se tratan después
@@ -69,5 +70,5 @@
     return { name: name || 'Supuesto importado', state: cleanState(raw.state) };
   }
 
-  App.scenarioCode = { encode, decode };
+  App.scenarioCode = { encode, decode, clean: cleanState }; // clean: también se usa al abrir la web y al cargar un supuesto guardado
 })(window.App = window.App || {});

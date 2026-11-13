@@ -4,7 +4,7 @@
 html{color-scheme:dark;font-size:clamp(16px,min(.55vw + 8.5px,1.55vh + 1px),26px)}
 body{margin:0;background:var(--bg);color:var(--text);font:.875rem/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
 h1{font-size:1.05rem;margin:0}h2{font-size:.95rem;margin:0 0 .6rem;color:var(--accent)}
-.top{display:flex;justify-content:space-between;align-items:center;gap:.5rem;flex-wrap:wrap;padding:.6rem 1rem;border-bottom:1px solid var(--line)}
+.top{display:flex;justify-content:space-between;align-items:center;gap:.5rem;flex-wrap:wrap;padding:.4rem .75rem;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:7;background:var(--bg)}
 .top-right{display:flex;align-items:center;gap:.6rem}
 .badge{font:inherit;font-size:.72rem;color:var(--muted);background:none;border:1px solid var(--line);padding:.2rem .55rem;border-radius:99px}
 .badge.live{color:var(--ok);border-color:rgba(52,211,153,.4)}
@@ -83,28 +83,26 @@ input.yr{width:4.1rem}
 .dual .track{left:0;right:0;background:#2a3547}
 .dual .fill{background:var(--accent);left:calc(9px + (100% - 18px) * var(--lo,0));right:calc(9px + (100% - 18px) * (1 - var(--hi,1)))}
 .pair .dual input[type=range]{position:absolute;inset:0;width:100%;height:100%;margin:0;min-width:0;background:none;pointer-events:none;-webkit-appearance:none;appearance:none}
+.dual input[data-hist=hi]{z-index:2}
 .dual input[type=range]::-webkit-slider-runnable-track{background:transparent;height:18px}
 .dual input[type=range]::-moz-range-track{background:transparent;height:18px}
 .dual input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;pointer-events:auto;width:18px;height:18px;border-radius:50%;background:var(--accent);border:2px solid var(--card);cursor:pointer}
 .dual input[type=range]::-moz-range-thumb{pointer-events:auto;width:14px;height:14px;border-radius:50%;background:var(--accent);border:2px solid var(--card);cursor:pointer}
 .note{color:var(--muted);font-size:.72rem;margin:-.3rem 0 .6rem}
 /* Valores extremos: rojo = pesimista, verde = demasiado optimista */
-@keyframes glow-bad{from{box-shadow:0 0 3px rgba(248,113,113,.4)}to{box-shadow:0 0 12px rgba(248,113,113,.95)}}
-@keyframes glow-good{from{box-shadow:0 0 3px rgba(52,211,153,.4)}to{box-shadow:0 0 12px rgba(52,211,153,.95)}}
 /* Aviso suave (naranja): faltan datos en el periodo elegido. Brillo más tenue que el rojo/verde */
-@keyframes glow-warn{from{box-shadow:0 0 2px rgba(251,146,60,.2)}to{box-shadow:0 0 6px rgba(251,146,60,.5)}}
 .field.is-warn>label{color:#fb923c}
 .field.is-warn .dual{filter:drop-shadow(0 0 3px rgba(251,146,60,.55))}
 .field.is-warn .dual .fill{background:#fb923c}
 .field.is-warn .dual input[type=range]::-webkit-slider-thumb{background:#fb923c}
 .field.is-warn .dual input[type=range]::-moz-range-thumb{background:#fb923c}
-.field.is-warn input[type=number]{border-color:#fb923c;animation:glow-warn 1.8s ease-in-out infinite alternate}
+.field.is-warn input[type=number]{border-color:#fb923c;box-shadow:0 0 5px rgba(251,146,60,.45)}
 .hist-warn{color:#fb923c;font-size:.72rem;line-height:1.35;margin:.15rem 0 .5rem}
 .field.is-bad>label{color:var(--bad)}.field.is-good>label{color:var(--ok)}
 .field.is-bad input[type=range]{accent-color:var(--bad);filter:drop-shadow(0 0 5px var(--bad))}
 .field.is-good input[type=range]{accent-color:var(--ok);filter:drop-shadow(0 0 5px var(--ok))}
-.field.is-bad input[type=number]{border-color:var(--bad);animation:glow-bad 1.1s ease-in-out infinite alternate}
-.field.is-good input[type=number]{border-color:var(--ok);animation:glow-good 1.1s ease-in-out infinite alternate}
+.field.is-bad input[type=number]{border-color:var(--bad);box-shadow:0 0 9px rgba(248,113,113,.85)}
+.field.is-good input[type=number]{border-color:var(--ok);box-shadow:0 0 9px rgba(52,211,153,.85)}
 .strategies{display:grid;gap:.5rem;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
 .strategy{text-align:left;background:#0f1622;border:1px solid var(--line);color:var(--text);border-radius:10px;padding:.55rem .65rem;font:inherit;cursor:pointer;transition:.15s}
 .strategy:hover:not(:disabled){border-color:var(--accent)}
@@ -127,8 +125,7 @@ button.ghost{background:transparent;color:var(--text);border:1px solid var(--lin
 .sc-io-row{display:flex;gap:.4rem;flex-wrap:wrap}
 .sc-msg{font-size:.78rem;margin:0 0 .6rem}.sc-msg.ok{color:var(--ok)}.sc-msg.err{color:var(--bad)}
 
-/* Cabecera fija en móvil, junto a la gráfica */
-.top{position:sticky;top:0;z-index:7;background:var(--bg);padding:.4rem .75rem}
+/* (la cabecera fija en móvil, junto a la gráfica, está en la regla .top de arriba) */
 .strat-head{display:flex;justify-content:space-between;align-items:center;gap:.5rem;flex-wrap:wrap;margin-bottom:.6rem}.strat-head h2{margin:0}
 .seg{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
 .seg button{background:transparent;color:var(--muted);border:0;padding:.25rem .6rem;font:inherit;font-size:.75rem;cursor:pointer}
@@ -178,7 +175,6 @@ button.ghost{background:transparent;color:var(--text);border:1px solid var(--lin
 .muted{color:var(--muted)}
 #tax-body .note{margin:0 0 .5rem}
 .tax-tbl tr.sub th,.tax-tbl tr.sub td{color:var(--muted);font-weight:400;font-size:.72rem}
-.tax-row select{width:auto}
 
 /* ---- Fondos personalizados ---- */
 .tools-btns{display:flex;gap:.4rem;align-items:center}
@@ -207,3 +203,4 @@ button.ghost{background:transparent;color:var(--text);border:1px solid var(--lin
 /* Mientras se mueve un slider, lo que se calcula después (riesgo y estrategias) se atenúa */
 #risk-total,#strategies{transition:opacity .15s}
 #risk-total.stale,#strategies.stale{opacity:.55}
+.cchk{margin:.1rem 0 0;font-size:.75rem}.chint{color:var(--muted);font-size:.68rem}.chint[hidden]{display:none}

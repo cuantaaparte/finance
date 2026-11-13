@@ -25,6 +25,7 @@ async function yahoo(id) {
 }
 async function stooq(id) { // alternativa si Yahoo falla
   const res = await get(`https://stooq.com/q/d/l/?s=${id.toLowerCase()}.us&i=m`);
+  if (!res.ok) throw new Error('HTTP ' + res.status);
   const rows = (await res.text()).trim().split('\n').slice(1).map(l => l.split(','));
   return rows.map(c => [Math.round(Date.parse(c[0]) / 1000), Number(c[4])]);
 }

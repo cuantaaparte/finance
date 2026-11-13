@@ -11,33 +11,37 @@
   const RET_PCT = { retNeedsPct: 'retNeeds', retLeisurePct: 'retLeisure' }; // % sobre los ingresos de la inversión (suman 100 %)
   const MONEY = new Set(['net', 'needs', 'leisure', 'invest', 'retIncome', 'retNeeds', 'retLeisure']);
 
-  const state = Object.assign(structuredClone(config.DEFAULT_STATE), storage.get(config.STORAGE.settings, {}));
-  if (!Object.keys(state.alloc || {}).length) state.alloc = { ...config.DEFAULT_STATE.alloc };
-  state.prov = state.prov || {};
-  state.tax = taxes.clean(state.tax); // impuestos guardados: se validan al abrir
-  state.customFunds = customFunds.clean(state.customFunds); // fondos personalizados guardados
-  if (!['net', 'gross'].includes(state.retBasis)) state.retBasis = 'net';
-  delete state.histYears; // ajuste antiguo (años hacia atrás), sustituido por histFrom/histTo
+  const state = scenarioCode.clean(storage.get(config.STORAGE.settings, {})); // lo guardado pasa por la misma validación que un supuesto importado (valores por defecto, rangos, fondos, impuestos…)
   let base = null;          // últimos datos introducidos por el usuario: de aquí salen las estrategias
   let active = null;        // estrategia aplicada actualmente
   let scenarios = storage.get(config.STORAGE.scenarios, []);
   let raf = 0;
+  let baseStale = false;    // los datos cambiaron desde la última vez que se tomó la base de las estrategias (se toma al calcular lo pesado, no en cada evento)
+  let dirty = false, saveTimer = 0; // guardado en localStorage con retraso
+  let dragging = false, heavyPending = false; // slider pulsado / lo pesado está pendiente
+  let lastRes = null;       // última simulación: de aquí salen el bruto del primer año de jubilación y la parte que es ganancia
   // Ajustes de VISTA que una estrategia no debe pisar (antes, al aplicar una, volvía a "Salario medio" porque la copia guardaba el valor antiguo).
   const VIEW_KEYS = ['stratBase', 'period', 'showInvested', 'showPrice', 'showTotal', 'showNominal', 'showDividends', 'hideCosts', 'retBasis'];
-  const applyState = next => { const keep = Object.fromEntries(VIEW_KEYS.map(k => [k, state[k]])); Object.assign(state, structuredClone(next), keep); };
+  const applyState = next => { const keep = Object.fromEntries([...VIEW_KEYS, 'customFunds'].map(k => [k, state[k]])); Object.assign(state, structuredClone(next), keep); state.retGross = null; };
   const factor = () => (state.period === 'year' ? 12 : 1);
   const clamp = (x, a, b) => Math.min(Math.max(x, a), b);
   /** Periodo de histórico elegido: por defecto, desde que hay datos de TODOS los índices hasta el último dato. `years` = duración real. */
+  let hrMemo = null; // se llama decenas de veces por pintado con los mismos datos
   function histRange(s = state) {
+    const key = data.version() + '|' + s.histFrom + '|' + s.histTo;
+    if (hrMemo && hrMemo.key === key) return hrMemo.val;
     const b = data.bounds();
     const to = clamp(s.histTo ?? b.max, b.min + 1, b.max), from = clamp(s.histFrom ?? b.common, b.min, to - 1);
     const startKey = (from - 1) * 12 + 11, endKey = to >= b.max ? b.lastKey : to * 12 + 11;
-    return { from, to, b, years: (endKey - startKey) / 12 };
+    const val = { from, to, b, years: (endKey - startKey) / 12 };
+    hrMemo = { key, val };
+    return val;
   }
   const rateOf = f => data.cagr(f, histRange());
   // Datos del riesgo: todo el histórico disponible (mín. 20 años, para que una ventana corta no oculte las grandes caídas) e inflación de los últimos 30 años
   const inputsOf = s => ({ market: data.portfolioStats(s.alloc, Math.max(Math.ceil(histRange(s).years), 20)), infl: data.inflationStats(30) });
-  const mLabel = key => new Date(Date.UTC(Math.floor(key / 12), key % 12, 1)).toLocaleDateString('es-ES', { month: 'short', year: 'numeric', timeZone: 'UTC' });
+  const MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic']; // sin crear un formateador de fechas en cada llamada
+  const mLabel = key => `${MESES[key % 12]} ${Math.floor(key / 12)}`;
   const fmtYears = y => { const r = round(y, 1); return (Number.isInteger(r) ? String(r) : r.toFixed(1).replace('.', ',')) + ' años'; };
   const sumAlloc = () => Object.values(state.alloc).reduce((a, b) => a + b, 0);
 
@@ -70,9 +74,11 @@
   /** Debajo de "Ingresos de la inversión": elegir neto/bruto, descripción (con el importe sin ajustar a inflación) y botón de impuestos. */
   function buildRetExtras() {
     const seg = h('div', { class: 'seg seg-s', id: 'ret-basis', title: 'Neto: lo que quieres cobrar tras impuestos. Bruto: lo que sacas de las inversiones antes de impuestos.' },
-      ...[['net', 'Neto'], ['gross', 'Bruto']].map(([v, l]) => h('button', { type: 'button', 'data-rb': v, onclick: () => { state.retBasis = v; refresh(false); } }, l)));
+      ...[['net', 'Neto'], ['gross', 'Bruto']].map(([v, l]) => h('button', { type: 'button', 'data-rb': v, onclick: () => { state.retBasis = v; state.retGross = v === 'gross' && lastRes ? lastRes.spend : null; refresh(false); } }, l)));
     return h('div', { class: 'ret-extra' }, seg,
-      h('div', { class: 'ret-info' }, h('div', { id: 'ret-desc' }), h('button', { type: 'button', class: 'btn ghost', id: 'tax-open', onclick: openTax }, 'Ajustar impuestos')));
+      h('div', { class: 'ret-info' }, h('div', { id: 'ret-desc' },
+        h('div', { id: 'ret-l1', title: 'Primer año de jubilación. Los años siguientes cambia según cuánta ganancia haya en el capital.' }),
+        h('div', { id: 'ret-l2', title: 'Mismo importe sin descontar la inflación: lo que verías en tu cuenta el primer año de jubilación.' })), h('button', { type: 'button', class: 'btn ghost', id: 'tax-open', onclick: openTax }, 'Ajustar impuestos')));
   }
 
   function buildField(f) {
@@ -81,10 +87,10 @@
     if (f.type === 'check') return h('label', { class: 'check' }, h('input', { type: 'checkbox', 'data-key': f.key }), f.label);
     const isMoney = MONEY.has(f.key);
     const row = h('div', { class: 'pair' },
-      h('input', { type: 'range', 'data-key': f.key, min: f.min ?? 0, max: f.max, step: f.step, 'data-max': f.max, 'data-step': f.step, ...link }),
-      h('input', { type: 'number', 'data-key': f.key, step: 'any', min: f.min ?? 0, inputmode: 'decimal', ...link }),
+      h('input', { type: 'range', 'aria-label': f.label, 'data-key': f.key, min: f.min ?? 0, max: f.max, step: f.step, 'data-max': f.max, 'data-step': f.step, ...link }),
+      h('input', { type: 'number', 'aria-label': f.label, 'data-key': f.key, step: 'any', min: f.min ?? 0, inputmode: 'decimal', ...link }),
       h('span', { class: 'suf' }, isMoney ? '€' : f.suffix || ''));
-    if (f.pct) row.append(h('input', { type: 'number', class: 'pct', 'data-key': f.pct, min: 0, max: 100, step: 'any', inputmode: 'decimal', ...link }), h('span', { class: 'suf' }, '%'));
+    if (f.pct) row.append(h('input', { type: 'number', class: 'pct', 'aria-label': f.label + ' (%)', 'data-key': f.pct, min: 0, max: 100, step: 'any', inputmode: 'decimal', ...link }), h('span', { class: 'suf' }, '%'));
     const field = h('div', { class: 'field', 'data-field': f.key }, h('label', {}, f.label, f.unit ? h('em', { 'data-unit': '' }) : null), row);
     if (f.key === 'retIncome') field.append(buildRetExtras());
     return field;
@@ -104,7 +110,7 @@
     box.append(h('p', { class: 'fnote', id: 'funds-note' }));
     config.FUNDS.forEach(f => box.append(h('div', { class: 'fund', 'data-fund': f.id },
       h('input', { type: 'checkbox', id: 'f-' + f.id, 'data-fcheck': f.id }),
-      h('div', { class: 'fmain' }, h('b', {}, f.name),
+      h('div', { class: 'fmain' }, h('label', { for: 'f-' + f.id }, h('b', {}, f.name)),
         h('select', { 'data-fprov': f.id, 'aria-label': 'Gestor' }, ...f.providers.map(p => h('option', { value: p.id })))),
       h('div', { class: 'rcell' }, h('span', { class: 'ret' }), h('small', { class: 'ter' })),
       h('input', { type: 'number', min: 0, max: 100, step: 'any', 'data-fw': f.id }),
@@ -112,16 +118,18 @@
     box.append(h('div', { id: 'custom-funds' }));
     box.append(h('div', { class: 'total-row' }, h('div', { class: 'total', id: 'alloc-total' }), h('div', { class: 'total', id: 'risk-total' })));
     box.addEventListener('input', e => {
-      const c = e.target.dataset.fcheck, w = e.target.dataset.fw, p = e.target.dataset.fprov, cy = e.target.dataset.cperyear, cp = e.target.dataset.cpct;
+      const c = e.target.dataset.fcheck, w = e.target.dataset.fw, p = e.target.dataset.fprov, cy = e.target.dataset.cperyear, cp = e.target.dataset.cpct, ct = e.target.dataset.ctaxed;
+      if (ct) { const d = state.customFunds.find(x => x.id === ct); if (!d) return; d.taxed = e.target.checked; refresh(); return; }
       if (cy || cp) { // sliders de movimientos de un fondo personalizado
         const d = state.customFunds.find(x => x.id === (cy || cp)); if (!d) return;
         if (cy) d.perYear = Math.round(parseFloat(e.target.value) || 0); else d.pct = parseFloat(e.target.value) || 0;
+        if (!d.taxed) { updateCustomRow(e.target.closest('.fund'), config.FUNDS.find(x => x.id === d.id), false); scheduleSave(); return; } // sin impuestos no cambia ningún resultado: no se recalcula
         refresh(); return;
       }
       if (c) {
         if (e.target.checked) state.alloc[c] = Math.max(0, 100 - sumAlloc());
         else if (Object.keys(state.alloc).length > 1) delete state.alloc[c];
-      } else if (w) state.alloc[w] = Math.max(0, parseFloat(e.target.value) || 0);
+      } else if (w) { const v = parseFloat(e.target.value); if (!Number.isFinite(v)) return; state.alloc[w] = Math.max(0, v); } // vacío = todavía escribiendo
       else if (p) state.prov[p] = e.target.value;
       else return;
       refresh();
@@ -151,15 +159,19 @@
     if (key === 'periodYearly') state.period = v ? 'year' : 'month';
     else if (key in PCT) { state[PCT[key]] = (state.net * v) / 100; flag(PCT[key]); }
     else if (key in RET_PCT) setRetShare(key, v);
-    else if (key === 'retIncome') setRetIncome(state.retBasis === 'gross' ? taxes.netOf(taxes.resolve(state.tax), (v / factor()) * 12, lastRes?.q0 ?? 1) / 12 : v / factor()); // en bruto: se convierte a neto con los impuestos
-    else if (MONEY.has(key)) { state[key] = v / factor(); flag(key); }
+    else if (key === 'retIncome') { // en bruto: el importe pedido se guarda y se convierte a neto con los impuestos
+      const m = v / factor();
+      if (state.retBasis === 'gross') { state.retGross = m; setRetIncome(netFromGross(m, lastRes?.q0 ?? 1)); } else setRetIncome(m);
+    }
+    else if (MONEY.has(key)) { state[key] = v / factor(); flag(key); if (key === 'retNeeds' || key === 'retLeisure') state.retGross = null; } // cambiar el neto a mano: el bruto se vuelve a leer
+    else if (key === 'retLinked') { state.retLinked = v; state.retGross = !v && state.retBasis === 'gross' && lastRes ? lastRes.spend : null; }
     else state[key] = v;
     refresh(key !== 'showDividends' && key !== 'hideCosts'); // son solo de vista: no deben reiniciar la base de las estrategias
   }
   /** Cambia el periodo de histórico. Las casillas solo aceptan años de 4 cifras dentro del rango mientras escribes; al salir (commit) se ajusta. */
   function onHist(which, el, commit) {
     const b = data.bounds(), num = which === 'from' || which === 'to', v = Math.round(parseFloat(el.value));
-    if (!Number.isFinite(v) || (num && !commit && (v < b.min || v > b.max || String(v).length < 4))) { if (commit) renderHist(); return; }
+    if (!Number.isFinite(v) || (num && !commit && (v < b.min || v > b.max || String(v).length < 4))) { if (commit) renderHist(true); return; }
     let { from, to } = histRange();
     if (which === 'lo' || which === 'from') from = clamp(v, b.min, to - 1);
     else to = clamp(v, from + 1, b.max);
@@ -170,10 +182,12 @@
   }
   /* Jubilación: ingresos de la inversión = necesidades + ocio. Cambiar el total reescala ambos; cambiar un % reparte el resto al otro. */
   const retIncome = () => state.retNeeds + state.retLeisure;
+  let retShare = 0.7; // parte de necesidades: se recuerda para no perder el reparto al pasar por 0
+  const netFromGross = (gross, q0) => taxes.netOf(taxes.resolve(state.tax), gross * 12, q0) / 12;
   function setRetIncome(v) {
     const inc = retIncome();
-    if (inc > 0) { state.retNeeds *= v / inc; state.retLeisure *= v / inc; }
-    else { state.retNeeds = v * 0.7; state.retLeisure = v * 0.3; }
+    if (inc > 0) { retShare = state.retNeeds / inc; state.retNeeds *= v / inc; state.retLeisure *= v / inc; }
+    else { state.retNeeds = v * retShare; state.retLeisure = v * (1 - retShare); }
   }
   function setRetShare(key, pctValue) {
     const inc = retIncome(), part = (inc * Math.min(100, Math.max(0, pctValue))) / 100;
@@ -181,9 +195,10 @@
     else { state.retLeisure = part; state.retNeeds = inc - part; }
   }
   const valueOf = key => (key === 'retIncome' ? retIncome() : state[key]);
-  function flag(k) {
+  function flag(k) { // lo que el usuario pide se recuerda (…Want): si el sueldo baja un instante al teclear, no se pierde (ver finance.normalize)
     if (k === 'needs' || k === 'leisure') state.touched[k] = true;
     if (k === 'invest') state.investAuto = false;
+    if (k === 'needs') state.needsWant = state.needs; else if (k === 'leisure') state.leisureWant = state.leisure; else if (k === 'invest') state.investWant = state.invest;
   }
   function shown(key) {
     if (key in PCT) return state.net ? (state[PCT[key]] / state.net) * 100 : 0;
@@ -192,43 +207,67 @@
     return MONEY.has(key) ? valueOf(key) * factor() : state[key];
   }
 
+  /** Guardar en localStorage es síncrono: se hace una vez, cuando se deja de tocar (y al cerrar o salir de la pestaña). */
+  function scheduleSave() { dirty = true; clearTimeout(saveTimer); saveTimer = setTimeout(flushSave, 400); }
+  function flushSave() { if (!dirty) return; dirty = false; clearTimeout(saveTimer); storage.set(config.STORAGE.settings, state); }
+
   /** userEdit = true: el usuario cambió algo → esos datos pasan a ser la base de las estrategias. */
   function refresh(userEdit = true) {
     finance.normalize(state);
-    if (userEdit) { base = structuredClone(state); active = null; }
-    storage.set(config.STORAGE.settings, state);
+    if (userEdit) { baseStale = true; active = null; } // la copia para las estrategias se hace al calcular lo pesado, no en cada evento
+    scheduleSave();
     cancelAnimationFrame(raf);
     raf = requestAnimationFrame(render);
   }
 
   /* ---------- Pintado ---------- */
+  const dom = {}; // listas de elementos que no cambian (se buscan una sola vez, no en cada pintado)
+  const cached = (k, sel) => (dom[k] ||= $$(sel));
+  const setText = (el, t) => { if (el.textContent !== t) el.textContent = t; }; // escribir en el DOM solo si el texto cambió
+  let syncKey = null, histSig = null, fundsSig = null;
+
+  /** Los fondos personalizados solo se vuelven a poner en el catálogo cuando cambian ellos, el periodo de histórico o los datos. */
+  function syncCustom() {
+    const st = data.status(), hr = histRange();
+    const key = state.customFunds.length ? JSON.stringify([state.customFunds, hr.from, hr.to, st.mode, st.count, data.version()]) : '';
+    if (key === syncKey) return;
+    syncKey = key;
+    customFunds.sync(state.customFunds, rateOf);
+  }
+
   function render() {
-    customFunds.sync(state.customFunds, rateOf); // los fondos personalizados entran en el catálogo antes de simular
-    const port = finance.portfolio(state, rateOf), res = finance.simulate(state, port);
+    syncCustom();
+    const port = finance.portfolio(state, rateOf);
+    let res = finance.simulate(state, port);
+    if (state.retBasis === 'gross' && !state.retLinked) { // modo bruto: el bruto pedido manda y el neto se recalcula si cambia otro dato (la parte de ganancia no depende de lo que retiras)
+      if (state.retGross == null) state.retGross = res.spend;
+      else { const net = netFromGross(state.retGross, res.q0); if (Math.abs(net - retIncome()) > 1e-6) { setRetIncome(net); res = finance.simulate(state, port); } }
+    }
     lastRes = res;
-    $$('[data-key]').forEach(el => {
+    const f = factor(), yearly = state.period === 'year', ae = document.activeElement;
+    cached('keys', '[data-key]').forEach(el => {
       const key = el.dataset.key;
-      if (el.type === 'checkbox') el.checked = key === 'periodYearly' ? state.period === 'year' : !!state[key];
+      if (el.type === 'checkbox') { const on = key === 'periodYearly' ? yearly : !!state[key]; if (el.checked !== on) el.checked = on; }
       else {
-        if (el.type === 'range' && MONEY.has(key)) { el.max = el.dataset.max * factor(); el.step = el.dataset.step * factor(); }
+        if (el.type === 'range' && MONEY.has(key)) { const mx = el.dataset.max * f; if (el._mx !== mx) { el._mx = mx; el.max = mx; el.step = el.dataset.step * f; } }
         const v = round(shown(key));
-        if (document.activeElement !== el || Math.abs(Number(el.value) - v) > 0.01) el.value = v;
+        if (Math.abs(Number(el.value) - v) > (ae === el ? 0.01 : 0.004) || (ae !== el && el.value === '')) el.value = v; // solo si el valor cambió
       }
-      if ('linked' in el.dataset) el.disabled = state.retLinked;
+      if ('linked' in el.dataset && el.disabled !== state.retLinked) el.disabled = state.retLinked;
     });
-    $$('[data-unit]').forEach(e => { const b = e.closest('[data-field="retIncome"]') ? (state.retBasis === 'gross' ? ' bruto' : ' neto') : ''; e.textContent = `(€ / ${state.period === 'year' ? 'año' : 'mes'}${b})`; });
+    cached('units', '[data-unit]').forEach(e => { e._ret ??= !!e.closest('[data-field="retIncome"]'); setText(e, `(€ / ${yearly ? 'año' : 'mes'}${e._ret ? (state.retBasis === 'gross' ? ' bruto' : ' neto') : ''})`); });
     $('#hint-nominal').hidden = !state.showNominal; $('.legend').classList.toggle('nominal-on', !!state.showNominal);
     renderHist();
     renderFunds();
     renderExtremes();
     renderRetInfo(res);
-    $$('#ret-basis button').forEach(b => b.classList.toggle('on', b.dataset.rb === state.retBasis));
+    cached('basis', '#ret-basis button').forEach(b => b.classList.toggle('on', b.dataset.rb === state.retBasis));
 
     chart.render(res, state);
     renderKpis(res);
-    scheduleHeavy(port, res); // riesgo, estrategias y supuestos guardados: se calculan al soltar el slider
+    scheduleHeavy(port); // riesgo, estrategias y supuestos guardados: se calculan al soltar el slider
     const st = data.status(), badge = $('#data-status');
-    badge.textContent = st.mode === 'live' ? `En vivo (${st.count}/${config.FUNDS.filter(f => !f.custom).length})` : st.mode === 'saved' ? `Datos del ${st.date || 'archivo local'}` : 'Sin datos · estimados (reintentar)';
+    setText(badge, st.mode === 'live' ? `En vivo (${st.count}/${config.FUNDS.filter(f => !f.custom).length})` : st.mode === 'saved' ? `Datos del ${st.date || 'archivo local'}` : 'Sin datos · estimados (reintentar)');
     badge.classList.toggle('live', st.mode !== 'none');
     if ($('#tax-dlg').open) updateTaxPreview();
   }
@@ -236,19 +275,23 @@
   /** Aviso (vacío = todo bien) cuando a algún fondo elegido le faltan datos en el periodo seleccionado. */
   function histWarning() {
     if (data.status().mode === 'none') return 'Sin datos reales: la rentabilidad es una estimación fija y no cambia con los años.';
-    const selected = Object.keys(state.alloc).map(id => config.FUNDS.find(x => x.id === id)).filter(f => f && !f.custom);
-    const partial = selected.map(f => [f, rateOf(f)]).filter(([, r]) => !r.live || r.lateBy > 3);
+    const selected = Object.keys(state.alloc).map(id => config.FUNDS.find(x => x.id === id)).filter(f => f && (!f.custom || f.mimic)); // un personalizado que imita a otro hereda su histórico
+    const partial = selected.map(f => [f, rateOf(f.custom ? config.FUNDS.find(x => x.id === f.mimic.fund) : f)]).filter(([, r]) => !r.live || r.lateBy > 3);
     return partial.length ? `Sin histórico completo en este periodo: ${partial.map(([f, r]) => r.live ? `${f.name} (datos desde ${Math.floor(r.startKey / 12)})` : `${f.name} (sin datos: estimación fija)`).join(', ')}. Se usa el máximo disponible.` : '';
   }
 
   function renderHist(force = false) {
-    const { from, to, b, years } = histRange(), q = w => $(`[data-hist="${w}"]`), span = b.max - b.min || 1;
-    ['lo', 'hi', 'from', 'to'].forEach(w => { q(w).min = b.min; q(w).max = b.max; });
-    q('lo').value = from; q('hi').value = to;
-    if (force || document.activeElement !== q('from')) q('from').value = from;
-    if (force || document.activeElement !== q('to')) q('to').value = to;
+    const st = data.status(), sig = JSON.stringify([state.histFrom, state.histTo, Object.keys(state.alloc), state.customFunds.map(d => d.mimic?.fund || ''), st.mode, st.count, data.version()]);
+    if (!force && sig === histSig) return; // nada de lo que usa el slider de histórico ha cambiado
+    histSig = sig;
+    const { from, to, b, years } = histRange(), span = b.max - b.min || 1;
+    const q = (dom.hist ||= Object.fromEntries(['lo', 'hi', 'from', 'to'].map(w => [w, $(`[data-hist="${w}"]`)])));
+    ['lo', 'hi', 'from', 'to'].forEach(w => { q[w].min = b.min; q[w].max = b.max; });
+    q.lo.value = from; q.hi.value = to;
+    if (force || document.activeElement !== q.from) q.from.value = from;
+    if (force || document.activeElement !== q.to) q.to.value = to;
     const dual = $('.dual'); dual.style.setProperty('--lo', (from - b.min) / span); dual.style.setProperty('--hi', (to - b.min) / span);
-    q('lo').style.zIndex = (from - b.min) / span > 0.5 ? 3 : 1; // si se juntan al final, el de la izquierda queda accesible
+    q.lo.style.zIndex = (from - b.min) / span > 0.5 ? 3 : 1; // si se juntan al final, el de la izquierda queda accesible (si no, el derecho: ver CSS)
     const len = $('#hist-len'); len.textContent = '= ' + fmtYears(years);
     len.title = `Del cierre de ${mLabel((from - 1) * 12 + 11)} al de ${mLabel(to >= b.max ? b.lastKey : to * 12 + 11)}`;
     $('#hist-reset').hidden = state.histFrom == null && state.histTo == null;
@@ -258,8 +301,12 @@
   }
 
   function renderFunds() {
+    // Solo se repinta si cambió algo que afecta a los fondos (mover el sueldo o los años no los toca)
+    const st = data.status(), sig = JSON.stringify([state.alloc, state.prov, state.customFunds, state.histFrom, state.histTo, state.inflation, state.brokerFee, state.showDividends, state.hideCosts, state.tax, st.mode, st.count, data.terDate(), data.version(), [...openCustom]]);
+    if (sig === fundsSig) return;
+    fundsSig = sig;
     const infl = String(round(state.inflation, 2)).replace('.', ',');
-    const divOn = state.showDividends !== false, hideOn = state.hideCosts !== false, tax = Math.round(config.DIV_TAX * 100);
+    const divOn = state.showDividends !== false, hideOn = state.hideCosts !== false, tax = String(round(taxes.divTax(taxes.resolve(state.tax)) * 100, 1)).replace('.', ',');
     const brk = String(round(state.brokerFee, 2)).replace('.', ','), inflRate = state.inflation / 100;
     let note;
     if (hideOn) note = divOn
@@ -282,7 +329,7 @@
       const costs = hideOn ? 'sin descontar inflación ni TER' : `descontados el TER (${terTxt}) y la inflación (${infl} %): (1 + rentabilidad − TER) ÷ (1 + inflación) − 1`;
       ret.title = (r.live ? `Rentabilidad anual media del índice entre ${mLabel(r.startKey)} y ${mLabel(r.endKey)} (${fmtYears(r.span)}): precio ${pct(r.rate)}${divOn ? ` + dividendo bruto ${pct(dy)}` : ', sin dividendos'}` : 'Estimación fija (sin datos reales en este periodo)') + '; ' + costs;
       $('.ter', row).textContent = 'TER ' + String(finance.providerOf(state, f).ter).replace('.', ',') + ' %';
-      if (f.custom) updateCustomRow(row, f);
+      if (f.custom) updateCustomRow(row, f, true);
     });
     const t = sumAlloc(), el = $('#alloc-total');
     el.textContent = `Reparto: ${round(t, 1)} %` + (Math.abs(t - 100) > 0.1 ? ' (se normaliza a 100 %)' : '');
@@ -290,23 +337,31 @@
     $('#ter-info').textContent = data.terDate() ? `TER actualizados: ${data.terDate()}` : 'TER de referencia';
   }
 
-  /** Lo pesado (riesgo con 300 simulaciones y las 4 estrategias) se calcula cuando se deja de tocar: así sliders y datos responden al instante. */
+  /** Lo pesado (riesgo con 300 simulaciones y las 4 estrategias) se calcula cuando se deja de tocar: así sliders y datos responden al instante.
+   *  Con un slider pulsado no se calcula nada aunque pares un momento: se espera a soltarlo. */
   let heavyTimer = 0, heavyArgs = null, heavyFirst = true;
-  function scheduleHeavy(port, res) {
-    heavyArgs = [port, res];
+  function scheduleHeavy(port) {
+    heavyArgs = port;
     clearTimeout(heavyTimer);
     if (heavyFirst) { heavyFirst = false; runHeavy(); return; }
+    heavyPending = true;
     $('#risk-total').classList.add('stale'); $('#strategies').classList.add('stale'); // se atenúan mientras se actualizan
-    heavyTimer = setTimeout(runHeavy, 140);
+    if (!dragging) heavyTimer = setTimeout(runHeavy, 140);
   }
   function runHeavy() {
-    const [port, res] = heavyArgs;
-    renderRisk(port, res); renderStrategies(); renderScenarios();
+    heavyPending = false;
+    if (baseStale) { base = structuredClone(state); baseStale = false; }
+    renderRisk(heavyArgs); renderStrategies();
     $('#risk-total').classList.remove('stale'); $('#strategies').classList.remove('stale');
   }
+  function endDrag() { // al soltar el slider se calcula lo pendiente
+    if (!dragging) return;
+    dragging = false;
+    if (heavyPending) { clearTimeout(heavyTimer); heavyTimer = setTimeout(runHeavy, 30); }
+  }
 
-  function renderRisk(port, res) {
-    const r = finance.risk(state, port, res, rateOf, inputsOf(state)), el = $('#risk-total'), pc = x => (x * 100).toFixed(1).replace('.', ',') + ' %';
+  function renderRisk(port) {
+    const r = finance.risk(state, port, rateOf, inputsOf(state)), el = $('#risk-total'), pc = x => (x * 100).toFixed(1).replace('.', ',') + ' %';
     el.textContent = `Riesgo: ${r.level} (${r.score}/100)`;
     el.className = 'total' + (r.color ? ' risk-' + r.color : '');
     el.title = `Nota de riesgo ${r.score}/100: hasta 50 es la probabilidad de quedarte sin dinero antes de acabar la jubilación (300 simulaciones); por encima, cuánto antes se agota\n`
@@ -320,16 +375,18 @@
   /** Marca en rojo (pesimista) o verde (demasiado optimista) los campos con valores extremos. */
   function renderExtremes() {
     const out = (r, v) => r && ((r.gt != null && v > r.gt) || (r.lt != null && v < r.lt));
-    $$('.field[data-field]').forEach(el => {
+    cached('fields', '.field[data-field]').forEach(el => {
       const key = el.dataset.field, rule = config.EXTREMES[key];
       const v = rule?.pctOfNet ? (state.net > 0 ? (valueOf(key) / state.net) * 100 : NaN) : valueOf(key);
       const hit = !rule || !Number.isFinite(v) ? null : out(rule.bad, v) ? 'bad' : out(rule.good, v) ? 'good' : null;
       el.classList.toggle('is-bad', hit === 'bad'); el.classList.toggle('is-good', hit === 'good');
       const of = rule?.pctOfNet && Number.isFinite(v) ? ` (${Math.round(v)} % de tu sueldo neto actual, en € de hoy)` : '';
-      el.title = hit === 'bad' ? 'Valor extremo: muy pesimista' + of : hit === 'good' ? 'Valor extremo: demasiado optimista' + of : '';
+      const title = hit === 'bad' ? 'Valor extremo: muy pesimista' + of : hit === 'good' ? 'Valor extremo: demasiado optimista' + of : '';
+      if (el.title !== title) el.title = title;
     });
   }
 
+  let kpiEls = null; // las 4 tarjetas se crean una vez; luego solo cambian sus textos
   function renderKpis(res) {
     const rate = res.withdrawalRate, risky = res.depleted !== null || rate > 0.04;
     const items = [
@@ -338,18 +395,21 @@
       ['Rentab. real', pct(res.realReturn), ''],
       ['Estado', res.depleted ? `Se agota año ${res.depleted}` : 'Sostenible', res.depleted ? 'bad' : 'ok'],
     ];
-    $('#kpis').replaceChildren(...items.map(([l, v, c]) => h('div', { class: 'kpi ' + c }, h('small', {}, l), h('b', {}, v))));
+    if (!kpiEls) { kpiEls = items.map(([l]) => h('div', { class: 'kpi' }, h('small', {}, l), h('b'))); $('#kpis').replaceChildren(...kpiEls); }
+    items.forEach(([, v, c], i) => { const d = kpiEls[i], cls = 'kpi ' + c; setText(d.lastChild, v); if (d.className !== cls) d.className = cls; });
   }
 
+  const STRAT_KEYS = ['net', 'needs', 'leisure', 'invest', 'investAuto', 'touched', 'initial', 'workYears', 'retireYears', 'inflation', 'brokerFee', 'retLinked', 'retNeeds', 'retLeisure', 'tax'];
   let stratCache = null, stratDomKey = null;
   function renderStrategies() {
     $$('#strat-base button').forEach(b => b.classList.toggle('on', b.dataset.sb === state.stratBase));
     const a = config.AVERAGE_PROFILE;
     $('#strat-note').textContent = state.stratBase === 'avg'
-      ? `Calculadas con un perfil de salario medio (${eur.format(a.net)}/mes, ${a.workYears} años trabajando y ${a.retireYears} de jubilación); se mantienen tus fondos, inflación y comisiones.`
+      ? `Calculadas con un perfil de salario medio (${eur.format(a.net)}/mes, ${a.workYears} años trabajando y ${a.retireYears} de jubilación); se mantienen tu inflación, comisión del bróker e impuestos. Cada estrategia elige sus propios fondos.`
       : 'Calculadas con los datos que has introducido (tu sueldo, gastos, ahorro inicial y años).';
     const start = base || state, source = state.stratBase === 'avg' ? finance.averageProfile(start) : start;
-    const hr = histRange(), key = JSON.stringify([source, hr.from, hr.to, data.status().count, data.status().mode, data.terDate()]); // lo que, si no cambia, deja las estrategias igual
+    // Las estrategias ignoran tus fondos (cada una fija los suyos): solo dependen de estos datos, del histórico y de los datos de mercado
+    const hr = histRange(), key = JSON.stringify([STRAT_KEYS.map(k => source[k]), hr.from, hr.to, data.status().count, data.status().mode, data.terDate(), data.version()]);
     if (!stratCache || stratCache.key !== key) stratCache = { key, list: finance.strategies(source, rateOf, inputsOf) };
     if (stratDomKey === key + '|' + active) return;
     stratDomKey = key + '|' + active;
@@ -428,7 +488,7 @@
     $('#scenarios').replaceChildren(...scenarios.map(sc => h('li', {},
       h('div', { class: 'sc-head' }, nameCell(sc),
         h('div', { class: 'sc-btns' },
-          h('button', { type: 'button', onclick: () => { const keep = state.stratBase; Object.assign(state, structuredClone(sc.state)); state.stratBase = keep; refresh(); } }, 'Cargar'),
+          h('button', { type: 'button', onclick: () => { const keep = state.stratBase; Object.assign(state, scenarioCode.clean(sc.state)); state.stratBase = keep; refresh(); } }, 'Cargar'),
           h('button', { type: 'button', title: 'Guarda aquí los datos actuales', onclick: () => { sc.state = structuredClone(state); saveScenarios(); renderScenarios(true); } }, 'Actualizar'),
           h('button', { type: 'button', title: 'Cambiar el nombre', onclick: () => startRename(sc) }, 'Renombrar'),
           h('button', { type: 'button', title: 'Copia al portapapeles un código con todos los datos de este supuesto', onclick: () => exportScenario(sc) }, 'Exportar'),
@@ -438,18 +498,24 @@
 
 
   /* ---------- Impuestos de la jubilación ---------- */
-  let lastRes = null; // última simulación: de aquí salen el bruto del primer año de jubilación y la parte que es ganancia
-  const fmtMoney = (v, cur) => { try { return new Intl.NumberFormat('es-ES', { style: 'currency', currency: cur, maximumFractionDigits: 0 }).format(v); } catch { return Math.round(v) + ' ' + cur; } };
-  const curSym = cur => { try { return new Intl.NumberFormat('es-ES', { style: 'currency', currency: cur }).formatToParts(0).find(p => p.type === 'currency').value; } catch { return cur; } };
+  const nfs = new Map(), syms = new Map(); // los formateadores de números se crean una vez por moneda
+  const fmtMoney = (v, cur) => {
+    let nf = nfs.get(cur);
+    if (!nf) { try { nf = new Intl.NumberFormat('es-ES', { style: 'currency', currency: cur, maximumFractionDigits: 0 }); } catch { nf = { format: x => Math.round(x) + ' ' + cur }; } nfs.set(cur, nf); }
+    return nf.format(v);
+  };
+  const curSym = cur => {
+    if (!syms.has(cur)) { let s; try { s = new Intl.NumberFormat('es-ES', { style: 'currency', currency: cur }).formatToParts(0).find(p => p.type === 'currency').value; } catch { s = cur; } syms.set(cur, s); }
+    return syms.get(cur);
+  };
   const nomFactor = () => Math.pow(1 + state.inflation / 100, state.workYears); // inflación acumulada hasta jubilarte
 
   /** Descripción bajo "Ingresos de la inversión": neto, bruto e impuestos del primer año de jubilación, y lo mismo sin ajustar a inflación. */
   function renderRetInfo(res) {
     const def = taxes.resolve(state.tax), m = factor(), f = nomFactor(), per = state.period === 'year' ? '/año' : '/mes';
     const v = x => eur.format(x * m) + per, n = x => eur.format(x * m * f) + per, rate = res.spend > 0 ? 1 - res.net / res.spend : 0;
-    $('#ret-desc').replaceChildren(
-      h('div', { title: 'Primer año de jubilación. Los años siguientes cambia según cuánta ganancia haya en el capital.' }, `Neto ${v(res.net)} · bruto ${v(res.spend)} · impuestos ${pct(rate)} (${def.label})`),
-      h('div', { title: 'Mismo importe sin descontar la inflación: lo que verías en tu cuenta el primer año de jubilación.' }, `Sin ajustar a inflación (año ${state.workYears}): neto ${n(res.net)} · bruto ${n(res.spend)}`));
+    setText(dom.l1 ||= $('#ret-l1'), `Neto ${v(res.net)} · bruto ${v(res.spend)} · impuestos ${pct(rate)} (${def.label})`);
+    setText(dom.l2 ||= $('#ret-l2'), `Sin ajustar a inflación (año ${state.workYears}): neto ${n(res.net)} · bruto ${n(res.spend)}`);
   }
 
   function openTax() { renderTax(); const d = $('#tax-dlg'); if (!d.open) d.showModal(); }
@@ -457,7 +523,7 @@
   function ensureCustom() {
     if (state.tax.country === 'CUSTOM' && state.tax.custom) return state.tax.custom;
     const d = taxes.resolve(state.tax);
-    state.tax.custom = { from: d.label + (d.year ? ' (' + d.year + ')' : ''), currency: d.currency, fx: d.fx, on: d.on, inclusion: d.inclusion, allowance: d.allowance, brackets: structuredClone(d.brackets), social: structuredClone(d.social) };
+    state.tax.custom = { from: d.label + (d.year ? ' (' + d.year + ')' : ''), currency: d.currency, fx: d.fx, on: d.on, inclusion: d.inclusion, allowance: d.allowance, divRate: d.divRate ?? null, brackets: structuredClone(d.brackets), social: structuredClone(d.social) };
     state.tax.country = 'CUSTOM';
     return state.tax.custom;
   }
@@ -488,6 +554,8 @@
       h('button', { type: 'button', class: 'del-x', 'data-t': 'soc-del', 'data-i': i, title: 'Quitar' }, '✕')));
     const onSel = h('select', { 'data-t': 'on', 'aria-label': 'Qué tributa' }, h('option', { value: 'gain' }, 'Solo la ganancia'), h('option', { value: 'all' }, 'Toda la retirada'));
     onSel.value = def.on;
+    const curSel = h('select', { 'data-t': 'cur', 'aria-label': 'Moneda de los importes' }, ...['EUR', ...taxes.currencies()].map(c => h('option', { value: c }, c)));
+    curSel.value = def.currency;
     const fxTxt = cur !== 'EUR' ? ` Tipo de cambio: ${String(round(def.fx, 4)).replace('.', ',')} ${cur} por €${taxes.fxDate() && !def.custom ? ' (' + new Date(taxes.fxDate()).toLocaleDateString('es-ES') + ')' : ''}.` : '';
     $('#tax-body').replaceChildren(
       h('div', { class: 'tax-row' },
@@ -508,6 +576,10 @@
       h('div', { class: 'tax-row' },
         h('label', {}, 'Tributa', onSel),
         h('label', {}, 'Parte de la base que tributa', h('input', { type: 'number', class: 'rate', min: 0, max: 100, step: 'any', 'data-t': 'incl', value: round((def.inclusion ?? 1) * 100) }), ' %')),
+      h('div', { class: 'tax-row' },
+        h('label', {}, 'Impuesto sobre dividendos', h('input', { type: 'number', class: 'rate', min: 0, max: 99, step: 'any', 'data-t': 'div', value: round(taxes.divTax(def) * 100, 2) }), ' %'),
+        h('label', {}, 'Moneda de los importes', curSel),
+        def.currency !== 'EUR' ? h('label', {}, '1 € =', h('input', { type: 'number', class: 'rate', min: 0, step: 'any', 'data-t': 'fx', value: round(def.fx, 4) }), ` ${def.currency}`) : null),
       h('h3', { class: 'tax-h' }, 'Seguridad social'),
       social.length ? h('div', {}, ...social) : h('p', { class: 'note' }, 'No se aplica: vender fondos de inversión no cotiza a la Seguridad Social. Si en tu caso sí, añádela aquí.'),
       h('button', { type: 'button', class: 'btn ghost', 'data-t': 'soc-add' }, '+ Añadir cotización'),
@@ -539,12 +611,14 @@
   function initTax() {
     const dlg = $('#tax-dlg'), body = $('#tax-body');
     $('#tax-close').addEventListener('click', () => dlg.close());
+    body.addEventListener('focusout', e => { if (e.target.matches?.('input[type=number]') && e.target.value.trim() === '') renderTax(); }); // un campo vacío vuelve a su valor
     dlg.addEventListener('click', e => { if (e.target === dlg) dlg.close(); });
     body.addEventListener('change', e => {
       const el = e.target, t = el.dataset.t;
       if (el.id === 'tax-country') { if (el.value === 'CUSTOM') ensureCustom(); else { state.tax.country = el.value; state.tax.scale = null; } refresh(); renderTax(); }
       else if (el.id === 'tax-scale') { state.tax.scale = el.value; refresh(); renderTax(); }
       else if (t === 'on') { ensureCustom().on = el.value === 'all' ? 'all' : 'gain'; refresh(); renderTax(); }
+      else if (t === 'cur') { const c = ensureCustom(); c.currency = el.value; c.fx = taxes.fxFor(el.value); refresh(); renderTax(); }
       else if (t === 'up' && state.tax.custom) { // al salir del campo se reordenan los tramos
         const c = state.tax.custom, before = JSON.stringify(c.brackets.map(b => b.upTo));
         c.brackets = taxes.normBrackets(c.brackets); refresh();
@@ -559,6 +633,8 @@
       else if (t === 'rate') c.brackets[i].rate = clamp(v, 0, 99);
       else if (t === 'allow') c.allowance = Math.max(0, v);
       else if (t === 'incl') c.inclusion = clamp(v, 0, 100) / 100;
+      else if (t === 'div') c.divRate = clamp(v, 0, 99);
+      else if (t === 'fx') c.fx = Math.max(1e-4, v);
       else if (t === 'soc-rate') c.social[i].rate = clamp(v, 0, 99);
       else if (t === 'soc-name') c.social[i].name = el.value.slice(0, 40);
       else return;
@@ -598,7 +674,7 @@
     return h('div', { class: 'fund custom', 'data-fund': d.id, 'data-custom': '1' },
       h('input', { type: 'checkbox', id: 'f-' + d.id, 'data-fcheck': d.id }),
       h('div', { class: 'fmain' },
-        h('div', { class: 'cname' }, h('b', {}, d.name), h('span', { class: 'cbadge' }, d.kind === 'etf' ? 'ETF' : 'Fondo indexado')),
+        h('div', { class: 'cname' }, h('label', { for: 'f-' + d.id }, h('b', {}, d.name)), h('span', { class: 'cbadge' }, d.kind === 'etf' ? 'ETF' : 'Fondo indexado')),
         h('small', { class: 'csub' }), h('small', { class: 'cmoves' }),
         h('div', { class: 'cbtns' },
           h('button', { type: 'button', 'data-cact': 'toggle', 'data-cid': d.id, title: 'Mostrar / ocultar movimientos' }, '▾'),
@@ -607,20 +683,27 @@
       h('div', { class: 'rcell' }, h('span', { class: 'ret' }), h('small', { class: 'ter' })),
       h('input', { type: 'number', min: 0, max: 100, step: 'any', 'data-fw': d.id }),
       h('span', { class: 'suf' }, '%'),
-      h('div', { class: 'cpanel', hidden: '' }, slider('Movimientos al año', 'cperyear', 12, 1), slider('% del fondo que mueves cada vez', 'cpct', 100, 1)));
+      h('div', { class: 'cpanel', hidden: '' }, slider('Movimientos al año', 'cperyear', 12, 1), slider('% del fondo que mueves cada vez', 'cpct', 100, 1),
+        h('label', { class: 'check cchk' }, h('input', { type: 'checkbox', 'data-ctaxed': d.id }), 'Se pagan impuestos en estos movimientos'),
+        h('small', { class: 'chint' }, 'Sin impuestos, mover dinero no cambia el resultado.')));
   }
 
-  function updateCustomRow(row, f) {
+  function updateCustomRow(row, f, withTitle = true) {
     const d = state.customFunds.find(x => x.id === f.id); if (!d) return;
-    const m = f.moves, bn = baseName(d), open = openCustom.has(d.id);
-    $('.csub', row).textContent = bn ? `Personalizado · imita a ${bn}` : 'Personalizado · fondo inventado';
-    $('.cmoves', row).textContent = m.perYear > 0 && m.pct > 0 ? `${m.perYear} mov./año · mueve el ${comma(m.pct, 1)} % · ${m.taxed ? 'con impuestos' : 'sin impuestos'}` : 'Sin movimientos';
-    $('.cpanel', row).hidden = !open; $('[data-cact="toggle"]', row).textContent = open ? '▴' : '▾';
-    [['cperyear', m.perYear, v => `${v} al año`], ['cpct', m.pct, v => `${comma(v, 1)} %`]].forEach(([k, v, fmt]) => {
-      const inp = $(`[data-${k}]`, row); if (document.activeElement !== inp) inp.value = v;
-      $(`[data-out="${k}"]`, row).textContent = fmt(v);
+    const bn = baseName(d), open = openCustom.has(d.id);
+    setText($('.csub', row), bn ? `Personalizado · imita a ${bn}` : 'Personalizado · fondo inventado');
+    setText($('.cmoves', row), d.perYear > 0 && d.pct > 0 ? `${d.perYear} mov./año · mueve el ${comma(d.pct, 1)} % · ${d.taxed ? 'con impuestos' : 'sin impuestos'}` : 'Sin movimientos');
+    $('.cpanel', row).hidden = !open; setText($('[data-cact="toggle"]', row), open ? '▴' : '▾');
+    [['cperyear', d.perYear, v => `${v} al año`], ['cpct', d.pct, v => `${comma(v, 1)} %`]].forEach(([k, v, fmt]) => {
+      const inp = $(`[data-${k}]`, row); if (document.activeElement !== inp && Number(inp.value) !== v) inp.value = v;
+      setText($(`[data-out="${k}"]`, row), fmt(v));
     });
-    $('.ret', row).title = bn ? `Igual que ${bn}${Object.keys(d.vals || {}).length ? ', con tus cambios' : ''}` : 'Rentabilidad que has indicado para este fondo (subida del precio' + (state.showDividends !== false ? ' + dividendo bruto)' : ')');
+    const ck = $('[data-ctaxed]', row); if (ck.checked !== !!d.taxed) ck.checked = !!d.taxed;
+    $('.chint', row).hidden = !!d.taxed; // sin impuestos los movimientos no cambian el resultado
+    if (withTitle) { // se añade a la explicación de TER e inflación que ya puso renderFunds, sin borrarla
+      const ret = $('.ret', row), pre = bn ? `Igual que ${bn}${Object.keys(d.vals || {}).length ? ', con tus cambios' : ''}` : 'Rentabilidad que has indicado para este fondo';
+      ret.title = pre + ' · ' + ret.title;
+    }
   }
 
   /* --- Ventana de añadir / editar --- */
@@ -680,7 +763,7 @@
       const v = e[f.k], changed = mim && draft.vals[f.k] != null;
       return h('div', { class: 'field fd-field' },
         h('label', {}, f.label, h('span', { class: 'fd-r' }, changed ? h('button', { type: 'button', class: 'link', 'data-fa': 'reset', 'data-k': f.k, title: 'Volver al valor del fondo imitado' }, '↺ restablecer') : null)),
-        h('div', { class: 'pair' }, h('input', { type: 'range', min: f.min, max: f.max, step: f.step, value: v, 'data-fv': f.k, 'data-r': 1 }),
+        h('div', { class: 'pair' }, h('input', { type: 'range', min: f.min, max: f.max, step: f.step, value: v, 'data-fv': f.k }),
           h('input', { type: 'number', step: 'any', value: round(v, 3), 'data-fv': f.k }), h('span', { class: 'suf' }, f.unit)),
         h('small', { class: 'muted' }, f.hint));
     });
@@ -711,6 +794,7 @@
   function initFundDlg() {
     const dlg = $('#fund-dlg'), body = $('#fund-body');
     $('#fund-close').addEventListener('click', () => dlg.close());
+    body.addEventListener('focusout', e => { if (e.target.matches?.('input[type=number]') && e.target.value.trim() === '') renderFundDlg(); }); // un campo vacío vuelve a su valor
     dlg.addEventListener('click', e => { if (e.target === dlg) dlg.close(); });
     body.addEventListener('input', e => {
       const el = e.target, dk = el.dataset.d, fv = el.dataset.fv;
@@ -727,7 +811,7 @@
     body.addEventListener('change', e => {
       const el = e.target, dk = el.dataset.d;
       if (dk === 'mimicFund') { const f0 = customFunds.baseFunds().find(f => f.id === el.value); draft.mimic = { fund: f0.id, prov: finance.cheapest(f0).id }; draft.vals = {}; renderFundDlg(); }
-      else if (dk === 'mimicProv') draft.mimic.prov = el.value;
+      else if (dk === 'mimicProv') { draft.mimic.prov = el.value; delete draft.vals.ter; } // el TER vuelve a ser el del nuevo gestor
     });
     body.addEventListener('click', e => {
       const b = e.target.closest('[data-fa]'); if (!b) return;
@@ -750,11 +834,17 @@
     chart.init($('#chart'), $('#tip'));
     initTax();
     initFundDlg();
-    document.addEventListener('input', e => { const el = e.target.closest('[data-key]'); if (el) set(el.dataset.key, el); });
-    document.addEventListener('input', e => { if (e.target.dataset?.hist) onHist(e.target.dataset.hist, e.target, false); });
+    // Mientras un slider está pulsado no se calcula lo pesado (riesgo y estrategias), aunque pares un momento: se hace al soltarlo
+    document.addEventListener('pointerdown', e => { if (e.target.matches?.('input[type=range]')) dragging = true; }, true);
+    document.addEventListener('pointerup', endDrag, true); document.addEventListener('pointercancel', endDrag, true);
+    document.addEventListener('change', e => { if (e.target.matches?.('input[type=range]')) endDrag(); }, true);
+    document.addEventListener('pointermove', e => { if (dragging && e.buttons === 0) endDrag(); }, true);
+    window.addEventListener('pagehide', flushSave); document.addEventListener('visibilitychange', () => { if (document.hidden) flushSave(); });
+    renderScenarios(true);
+    document.addEventListener('input', e => { const t = e.target, el = t.closest?.('[data-key]'); if (el) set(el.dataset.key, el); else if (t.dataset?.hist) onHist(t.dataset.hist, t, false); });
     document.addEventListener('change', e => { if (e.target.dataset?.hist) onHist(e.target.dataset.hist, e.target, true); });
     // Si dejas un número vacío y sales del campo, se restaura el valor real (el estado no cambia mientras está vacío).
-    document.addEventListener('focusout', e => { if (e.target.matches?.('input[type=number]') && e.target.value.trim() === '') refresh(false); });
+    document.addEventListener('focusout', e => { if (!e.target.closest?.('dialog') && e.target.matches?.('input[type=number]') && e.target.value.trim() === '') refresh(false); });
     $('#data-status').addEventListener('click', async () => { $('#data-status').textContent = 'Conectando…'; await data.loadAll(true); refresh(false); });
     // Importar un supuesto: cuadro donde pegar el código (o botón que lo lee del portapapeles)
     $('#sc-import-btn').addEventListener('click', () => { const io = $('#sc-io'); io.hidden = !io.hidden; say(''); if (!io.hidden) $('#sc-code').focus(); });

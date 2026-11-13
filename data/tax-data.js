@@ -6,6 +6,7 @@
    - upTo = límite superior del tramo sobre la base imponible (null = en adelante); rate = tipo marginal (%).
    - allowance = mínimo exento que se resta antes de aplicar los tramos; inclusion = parte de la base que tributa (1 = toda).
    - social = cotizaciones (% sobre la base). Vacío: no cotizan. fx = unidades de moneda por 1 € (solo de reserva).
+   - divRate = impuesto sobre los dividendos (%). Si falta, se usa el tipo de las ganancias (primer tramo que ya paga algo).
    Valores de referencia de 2025 para una persona soltera, solo impuesto estatal/federal. Revísalos con tu hacienda. */
 (function (App) {
   'use strict';
@@ -17,14 +18,14 @@
       { id: 'ES', name: 'España', currency: 'EUR', fx: 1, year: 2025, note: 'IRPF estatal + autonómico (escalas combinadas); según la comunidad varía algo.',
         scales: [
           { id: 'ahorro', short: 'plusvalías', name: 'Ganancias de fondos (base del ahorro)', on: 'gain', allowance: 0, social: [], brackets: B([6000, 19], [50000, 21], [200000, 23], [300000, 27], [null, 30]) },
-          { id: 'general', short: 'renta general', name: 'Como renta general (IRPF)', on: 'all', allowance: 5550, social: [], brackets: B([12450, 19], [20200, 24], [35200, 30], [60000, 37], [300000, 45], [null, 47]), note: 'El mínimo personal (5.550 €) se aplica como deducción de la base.' }] },
+          { id: 'general', short: 'renta general', name: 'Como renta general (IRPF)', on: 'all', allowance: 0, social: [], brackets: B([5550, 0], [12450, 19], [20200, 24], [35200, 30], [60000, 37], [300000, 45], [null, 47]), note: 'El mínimo personal (5.550 €) reduce la cuota: se modela como un primer tramo al 0 %, sin mover los demás límites.' }] },
       { id: 'US', name: 'EE. UU.', currency: 'USD', fx: 1.16, year: 2026, note: 'Solo impuesto federal (soltero); faltan los impuestos de cada estado y el 3,8 % adicional para rentas altas.',
         scales: [
           { id: 'ltcg', short: 'plusvalías', name: 'Ganancias a largo plazo (más de 1 año)', on: 'gain', allowance: 16100, social: [], brackets: B([49450, 0], [545500, 15], [null, 20]), note: 'Deducción estándar de 16.100 $.' },
           { id: 'ordinary', short: 'renta ordinaria', name: 'Como renta ordinaria', on: 'all', allowance: 16100, social: [], brackets: B([12400, 10], [50400, 12], [105700, 22], [201775, 24], [256225, 32], [640600, 35], [null, 37]) }] },
       { id: 'CH', name: 'Suiza', currency: 'CHF', fx: 0.93, year: 2025, note: 'Un inversor particular no paga impuesto por las plusvalías de sus fondos. Los cantones y comunas gravan más la renta: usa «Personalizado» para el tuyo.',
         scales: [
-          { id: 'gain', short: 'plusvalías', name: 'Ganancias de fondos (exentas)', on: 'gain', allowance: 0, social: [], brackets: flat(0) },
+          { id: 'gain', short: 'plusvalías', name: 'Ganancias de fondos (exentas)', on: 'gain', allowance: 0, divRate: 0.77, social: [], brackets: flat(0) },
           { id: 'income', short: 'renta', name: 'Como renta (solo federal, aproximado)', on: 'all', allowance: 0, social: [], approx: true, brackets: B([14800, 0], [32200, 0.77], [42200, 0.88], [56000, 2.64], [72700, 2.97], [78100, 5.94], [103600, 6.6], [134600, 8.8], [176000, 11], [755200, 13.2], [null, 11.5]) }] },
       { id: 'DE', name: 'Alemania', currency: 'EUR', fx: 1, year: 2025, note: 'Sin impuesto eclesiástico ni la exención parcial del 30 % de los fondos de renta variable.',
         scales: [
@@ -54,11 +55,11 @@
         scales: [{ id: 'none', short: 'sin impuestos', name: 'Sin impuestos', on: 'gain', allowance: 0, social: [], brackets: flat(0) }] },
       { id: 'CA', name: 'Canadá', currency: 'CAD', fx: 1.62, year: 2026, note: 'Solo impuesto federal; faltan los provinciales.',
         scales: [
-          { id: 'gain', short: 'plusvalías', name: 'Ganancias de capital (tributa el 50 %)', on: 'gain', inclusion: 0.5, allowance: 16452, social: [], brackets: B([58523, 14], [117045, 20.5], [181440, 26], [258482, 29], [null, 33]), note: 'Importe personal básico de 16.452 $ como deducción.' },
-          { id: 'income', short: 'renta', name: 'Como renta ordinaria', on: 'all', allowance: 16452, social: [], brackets: B([58523, 14], [117045, 20.5], [181440, 26], [258482, 29], [null, 33]) }] },
+          { id: 'gain', short: 'plusvalías', name: 'Ganancias de capital (tributa el 50 %)', on: 'gain', inclusion: 0.5, allowance: 0, divRate: 14, social: [], brackets: B([16452, 0], [58523, 14], [117045, 20.5], [181440, 26], [258482, 29], [null, 33]), note: 'El importe personal básico (16.452 $) se modela como un primer tramo al 0 % sobre la parte que tributa. Los dividendos de fondos extranjeros tributan como renta ordinaria.' },
+          { id: 'income', short: 'renta', name: 'Como renta ordinaria', on: 'all', allowance: 0, social: [], brackets: B([16452, 0], [58523, 14], [117045, 20.5], [181440, 26], [258482, 29], [null, 33]) }] },
       { id: 'GB', name: 'Reino Unido', currency: 'GBP', fx: 0.87, year: 2025, note: 'Inglaterra, Gales e Irlanda del Norte (Escocia tiene otros tramos).',
         scales: [
-          { id: 'cgt', short: 'plusvalías', name: 'Ganancias de capital (CGT)', on: 'gain', allowance: 3000, social: [], brackets: B([37700, 18], [null, 24]), note: 'Exención anual de 3.000 £.' },
+          { id: 'cgt', short: 'plusvalías', name: 'Ganancias de capital (CGT)', on: 'gain', allowance: 3000, divRate: 8.75, social: [], brackets: B([37700, 18], [null, 24]), note: 'Exención anual de 3.000 £.' },
           { id: 'income', short: 'renta', name: 'Como renta (Income Tax)', on: 'all', allowance: 0, social: [], brackets: B([12570, 0], [50270, 20], [125140, 40], [null, 45]) }] },
     ],
   };

@@ -46,6 +46,7 @@
     showDividends: true, // ver la rentabilidad de cada fondo con dividendos (solo cambia lo que se muestra; la simulación ya los incluye)
     hideCosts: true,     // true: la cifra de cada fondo NO descuenta inflación ni TER; false: se muestra ya descontada (solo cambia lo que se muestra)
     stratBase: 'avg', // punto de partida de las estrategias: 'avg' (salario medio) | 'mine' (tus datos)
+    retGross: null,   // en modo bruto: el importe bruto mensual que el usuario quiere cobrar (el neto se recalcula si cambia otro dato)
     retBasis: 'net',  // el importe "Ingresos de la inversión" se introduce en 'net' (tras impuestos) o 'gross' (bruto)
     customFunds: [],  // fondos personalizados (ver customFunds.js)
     tax: { country: 'ES', scale: null, custom: null }, // impuestos de la jubilación: país (data/tax-data.js) o 'CUSTOM' con tramos propios
@@ -85,7 +86,7 @@
   App.config = {
     VERSION,
     STORAGE: { settings: 'fi.settings.v1', scenarios: 'fi.scenarios.v1', series: 'fi.series.v1' },
-    DIV_TAX: 0.19, SERIES_TTL_MS: 24 * 3600 * 1000, FOREVER_SPEND: 2000, // € / mes que retira la estrategia "capital eterno"
+    SERIES_TTL_MS: 24 * 3600 * 1000, FOREVER_SPEND: 2000, // € / mes que retira la estrategia "capital eterno"
     PROXIES: [
       u => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u),
       u => 'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(u),

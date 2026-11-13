@@ -5,27 +5,36 @@
   const PAD = { l: 58, r: 14, t: 18, b: 28 }, BASE = { ...PAD };
   const compact = new Intl.NumberFormat('es-ES', { notation: 'compact', maximumFractionDigits: 1 });
   const eur = new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 });
-  let canvas, tip, last, hover = null;
+  let canvas, tip, last, hover = null, W = 0, H = 0, K = 1; // W, H, K: tamaño del lienzo y escala de la interfaz, medidos solo al cambiar de tamaño
 
   function niceMax(v) {
     const p = Math.pow(10, Math.floor(Math.log10(v)));
-    return [1, 2, 2.5, 5, 10].find(x => v / p <= x) * p;
+    return ([1, 2, 2.5, 5, 10].find(x => v / p <= x - 1e-9) || 10) * p; // el margen evita que 10,000000000000002 deje la escala sin valor (NaN)
   }
 
   function init(c, t) {
     canvas = c; tip = t;
-    new ResizeObserver(draw).observe(c.parentElement);
+    measure();
+    new ResizeObserver(() => { measure(); draw(); }).observe(c.parentElement);
+    window.addEventListener('resize', () => { measure(); draw(); });
     c.addEventListener('pointermove', onMove);
     c.addEventListener('pointerleave', () => { hover = null; tip.hidden = true; draw(); });
+  }
+
+  /** Lee el tamaño y la fuente raíz una vez (leerlos en cada pintado obligaba al navegador a recalcular la página entera). */
+  function measure() {
+    W = canvas.clientWidth; H = canvas.clientHeight;
+    K = (parseFloat(getComputedStyle(document.documentElement).fontSize) || 16) / 16;
   }
 
   function render(res, s) { last = { res, s }; draw(); }
 
   function draw() {
     if (!last) return;
-    const { res, s } = last, w = canvas.clientWidth, h = canvas.clientHeight;
+    const { res, s } = last;
+    if (!W) measure();
+    const w = W, h = H, k = K; // k: escala con el tamaño de la interfaz
     if (!w) return;
-    const k = (parseFloat(getComputedStyle(document.documentElement).fontSize) || 16) / 16; // escala con el tamaño de la interfaz
     for (const key in BASE) PAD[key] = BASE[key] * k;
     const iw = w - PAD.l - PAD.r, ih = h - PAD.t - PAD.b, dpr = window.devicePixelRatio || 1;
     const bw = Math.round(w * dpr), bh = Math.round(h * dpr);
@@ -33,6 +42,7 @@
     const ctx = canvas.getContext('2d');
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
 
     const vals = [...res.total];
     if (s.showInvested) vals.push(...res.invested);
@@ -57,12 +67,20 @@
       for (let y = a; y <= b; y++) y === a ? ctx.moveTo(X(y), Y(arr[y])) : ctx.lineTo(X(y), Y(arr[y]));
       ctx.strokeStyle = color; ctx.lineWidth = 2.5; ctx.stroke();
     };
+    // Una línea cuyo color cambia por tramos: los años seguidos del mismo color se dibujan de un solo trazo (antes, un trazo por año)
+    const multi = (arr, a, b, colorOf) => {
+      for (let y = a; y < b;) {
+        const c = colorOf(y); let e = y + 1;
+        while (e < b && colorOf(e) === c) e++;
+        line(arr, y, e, c); y = e;
+      }
+    };
     if (s.showInvested) line(res.invested, 0, res.work, C.invested);
     if (s.showPrice) line(res.price, 0, res.work, C.price);
     if (s.showTotal) line(res.total, 0, res.work, C.total);
     // Jubilación sin ajustar a inflación (euros nominales): lila si sube, naranja si baja. Se pinta debajo de la línea en € de hoy.
-    if (s.showNominal) for (let y = res.work; y < res.years; y++) line(res.nominal, y, y + 1, res.nominalDecline[y] ? C.nomDown : C.nomUp);
-    for (let y = res.work; y < res.years; y++) line(res.total, y, y + 1, res.decline[y] ? C.bad : C.ok);
+    if (s.showNominal) multi(res.nominal, res.work, res.years, y => (res.nominalDecline[y] ? C.nomDown : C.nomUp));
+    multi(res.total, res.work, res.years, y => (res.decline[y] ? C.bad : C.ok));
 
     ctx.setLineDash([6, 5]); ctx.strokeStyle = '#e6eaf2'; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(X(res.work), PAD.t); ctx.lineTo(X(res.work), PAD.t + ih); ctx.stroke(); ctx.setLineDash([]);
@@ -77,13 +95,15 @@
   function onMove(e) {
     const { res, s } = last, rect = canvas.getBoundingClientRect(), iw = rect.width - PAD.l - PAD.r;
     const y = Math.min(res.years, Math.max(0, Math.round(((e.clientX - rect.left - PAD.l) / iw) * res.years)));
+    const moveTip = () => { tip.style.left = Math.max(4, Math.min(e.clientX - rect.left + 12, rect.width - (tip.offsetWidth || 240) - 4)) + 'px'; };
+    if (y === hover && !tip.hidden) { moveTip(); return; } // mismo año: solo se mueve el cuadro, sin repintar ni recomponer el texto
     hover = y;
     const lines = [`Año ${y} · ${y <= res.work ? 'trabajando' : 'jubilado'}`];
     if (y <= res.work) lines.push(`Invertido: ${eur.format(res.invested[y])}`, `Con rentab.: ${eur.format(res.price[y])}`);
     lines.push(`${y <= res.work ? '+ dividendos' : 'Capital (€ de hoy)'}: ${eur.format(res.total[y])}`);
     if (s.showNominal && y >= res.work) lines.push(`Sin ajustar (€ nominales): ${eur.format(res.nominal[y])}`);
     tip.textContent = lines.join('\n'); tip.hidden = false;
-    tip.style.left = Math.min(e.clientX - rect.left + 12, rect.width - 240) + 'px';
+    moveTip();
     draw();
   }
 
