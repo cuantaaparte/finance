@@ -21,7 +21,7 @@
   let dragging = false, heavyPending = false; // slider pulsado / lo pesado está pendiente
   let lastRes = null;       // última simulación: de aquí salen el bruto del primer año de jubilación y la parte que es ganancia
   // Ajustes de VISTA que una estrategia no debe pisar (antes, al aplicar una, volvía a "Salario medio" porque la copia guardaba el valor antiguo).
-  const VIEW_KEYS = ['stratBase', 'period', 'showInvested', 'showPrice', 'showTotal', 'showNominal', 'showDividends', 'hideCosts', 'retBasis'];
+  const VIEW_KEYS = ['stratBase', 'period', 'showInvested', 'showPrice', 'showTotal', 'showNominal', 'showDividends', 'hideCosts', 'retBasis', 'favs', 'onlyFav'];
   const applyState = next => { const keep = Object.fromEntries([...VIEW_KEYS, 'customFunds'].map(k => [k, state[k]])); Object.assign(state, structuredClone(next), keep); state.retGross = null; };
   const factor = () => (state.period === 'year' ? 12 : 1);
   const clamp = (x, a, b) => Math.min(Math.max(x, a), b);
@@ -102,26 +102,35 @@
       h('label', { class: 'switch fswitch', title: 'Muestra la rentabilidad de cada fondo con el dividendo que reparte (bruto). La simulación siempre incluye los dividendos, tras impuestos.' },
         h('input', { type: 'checkbox', 'data-key': 'showDividends' }), h('i'), h('span', {}, 'Ver dividendos')),
       h('label', { class: 'switch fswitch', title: 'Activado: la cifra no descuenta ni la inflación ni el TER. Desactivado: se le resta la inflación que has elegido y el TER de cada fondo (cifra real, en € de hoy).' },
-        h('input', { type: 'checkbox', 'data-key': 'hideCosts' }), h('i'), h('span', {}, 'Ocultar inflación y TER'))));
+        h('input', { type: 'checkbox', 'data-key': 'hideCosts' }), h('i'), h('span', {}, 'Ocultar inflación y TER')),
+      h('label', { class: 'switch fswitch', title: 'Solo se ven los fondos que has marcado con la estrella o que tienes activados; el resto queda en una lista oculta debajo que puedes desplegar.' },
+        h('input', { type: 'checkbox', 'data-key': 'onlyFav' }), h('i'), h('span', {}, 'Ver solo favoritos y activos')),
+      h('label', { class: 'switch fswitch', title: 'Pasa todos los fondos a fondo indexado o a ETF (los que tengan los dos tipos). Si están mezclados, el interruptor queda a medias.' },
+        h('span', {}, 'Todos: fondo indexado'), h('input', { type: 'checkbox', id: 'all-kind' }), h('i'), h('span', {}, 'ETF'))));
     box.append(h('div', { class: 'tools' }, h('small', { id: 'ter-info' }),
       h('span', { class: 'tools-btns' },
         h('button', { type: 'button', class: 'plus', title: 'Añadir un fondo personalizado', 'aria-label': 'Añadir fondo personalizado', onclick: () => openFundDialog() }),
         h('button', { type: 'button', onclick: () => { config.FUNDS.forEach(f => { state.prov[f.id] = finance.cheapest(f, finance.kindOf(state, f)).id; }); refresh(); } }, 'Gestor más barato'))));
     box.append(h('p', { class: 'fnote', id: 'funds-note' }));
-    config.FUNDS.forEach(f => box.append(h('div', { class: 'fund', 'data-fund': f.id },
+    const main = h('div', { id: 'funds-main' });
+    config.FUNDS.forEach(f => main.append(h('div', { class: 'fund', 'data-fund': f.id },
       h('input', { type: 'checkbox', id: 'f-' + f.id, 'data-fcheck': f.id }),
       h('div', { class: 'fmain' },
         h('div', { class: 'cname' }, h('label', { for: 'f-' + f.id }, h('b', {}, f.name)), h('span', { class: 'kbadge' }),
-          h('button', { type: 'button', class: 'ctoggle', 'data-cact': 'toggle', 'data-cid': f.id, title: 'Tipo (ETF o fondo indexado), movimientos entre fondos e impuestos' }, '▾')),
+          h('span', { class: 'cright' },
+            h('button', { type: 'button', class: 'cstar', 'data-cact': 'fav', 'data-cid': f.id, title: 'Marcar como favorito', 'aria-label': 'Favorito' }, '☆'),
+            h('button', { type: 'button', class: 'ctoggle', 'data-cact': 'toggle', 'data-cid': f.id, title: 'Tipo (ETF o fondo indexado), movimientos entre fondos e impuestos' }, '▾'))),
         h('select', { 'data-fprov': f.id, 'aria-label': 'Gestor' }),
         h('small', { class: 'cmoves' })),
       h('div', { class: 'rcell' }, h('span', { class: 'ret' }), h('small', { class: 'ter' })),
       h('input', { type: 'number', min: 0, max: 100, step: 'any', 'data-fw': f.id }),
       h('span', { class: 'suf' }, '%'),
       fundPanel(f))));
-    box.append(h('div', { id: 'custom-funds' }));
+    box.append(main, h('div', { id: 'custom-funds' }), // custom-funds: zona de paso de los personalizados; layoutFunds los coloca
+      h('div', { id: 'funds-rest-wrap', hidden: '' }, h('button', { type: 'button', id: 'funds-rest-toggle', class: 'rest-toggle' }), h('div', { id: 'funds-rest', hidden: '' })));
     box.append(h('div', { class: 'total-row' }, h('div', { class: 'total', id: 'alloc-total' }), h('div', { class: 'total', id: 'risk-total' })));
     box.addEventListener('input', e => {
+      if (e.target.id === 'all-kind') { setAllKinds(e.target.checked ? 'etf' : 'index'); refresh(); return; }
       const c = e.target.dataset.fcheck, w = e.target.dataset.fw, p = e.target.dataset.fprov, cy = e.target.dataset.cperyear, cp = e.target.dataset.cpct, ct = e.target.dataset.ctaxed, ck = e.target.dataset.ckind;
       const fid = ck || ct || cy || cp;
       if (fid) { // panel de un fondo (del catálogo o personalizado): tipo, movimientos al año, % que se mueve e impuestos
@@ -141,10 +150,12 @@
       else return;
       refresh();
     });
-    box.addEventListener('click', e => { // botones de las filas personalizadas
+    box.addEventListener('click', e => { // botones de las filas y lista de fondos ocultos
+      if (e.target.id === 'funds-rest-toggle') { restOpen = !restOpen; refresh(false); return; }
       const b = e.target.closest('[data-cact]'); if (!b) return;
       const id = b.dataset.cid, a = b.dataset.cact;
-      if (a === 'toggle') { if (openCustom.has(id)) openCustom.delete(id); else openCustom.add(id); refresh(false); }
+      if (a === 'fav') { toggleFav(id); refresh(false); }
+      else if (a === 'toggle') { if (openCustom.has(id)) openCustom.delete(id); else openCustom.add(id); refresh(false); }
       else if (a === 'edit') openFundDialog(id);
       else if (a === 'del') deleteFund(id);
     });
@@ -309,7 +320,7 @@
 
   function renderFunds() {
     // Solo se repinta si cambió algo que afecta a los fondos (mover el sueldo o los años no los toca)
-    const st = data.status(), sig = JSON.stringify([state.alloc, state.prov, state.customFunds, state.fundCfg, state.histFrom, state.histTo, state.inflation, state.brokerFee, state.showDividends, state.hideCosts, state.tax, st.mode, st.count, data.terDate(), data.version(), [...openCustom]]);
+    const st = data.status(), sig = JSON.stringify([state.alloc, state.prov, state.customFunds, state.fundCfg, state.favs, state.onlyFav, restOpen, state.histFrom, state.histTo, state.inflation, state.brokerFee, state.showDividends, state.hideCosts, state.tax, st.mode, st.count, data.terDate(), data.version(), [...openCustom]]);
     if (sig === fundsSig) return;
     fundsSig = sig;
     const infl = String(round(state.inflation, 2)).replace('.', ',');
@@ -322,6 +333,7 @@
     else note = `Cifra de cada fondo: rentabilidad anual media del índice en el periodo elegido, ${divOn ? 'con dividendos (subida del precio más el dividendo bruto del fondo)' : 'sin dividendos'}, ya descontados el TER de su gestor y la inflación que has elegido (${infl} %), es decir, en € de hoy. La simulación además resta la comisión del bróker (${brk} %)${divOn ? `; el dividendo se cuenta una sola vez, después de impuestos (${tax} %)` : ' y le suma su dividendo'}.`;
     $('#funds-note').textContent = note;
     renderCustomRows();
+    layoutFunds();
     $$('.fund').forEach(row => {
       const f = config.FUNDS.find(x => x.id === row.dataset.fund), on = f.id in state.alloc, r = rateOf(f);
       const dy = divOn ? f.yield / 100 : 0, terPct = finance.providerOf(state, f).ter, terTxt = String(terPct).replace('.', ',') + ' %';
@@ -338,6 +350,8 @@
       $('.ter', row).textContent = 'TER ' + String(finance.providerOf(state, f).ter).replace('.', ',') + ' %';
       updateFundPanel(row, f, !!f.custom);
     });
+    const ak = $('#all-kind'), kinds = config.FUNDS.filter(f => f.custom || (f.providers.some(p => p.kind === 'etf') && f.providers.some(p => p.kind === 'index'))).map(f => optsOf(f).kind);
+    ak.indeterminate = kinds.length > 0 && kinds.some(k => k !== kinds[0]); ak.checked = kinds.length > 0 && kinds.every(k => k === 'etf'); // a medias si están mezclados
     const t = sumAlloc(), el = $('#alloc-total');
     el.textContent = `Reparto: ${round(t, 1)} %` + (Math.abs(t - 100) > 0.1 ? ' (se normaliza a 100 %)' : '');
     el.classList.toggle('warn', Math.abs(t - 100) > 0.1);
@@ -681,7 +695,8 @@
     const rename = o => Object.fromEntries(Object.entries(o).map(([k, v]) => [remap[k] || k, v]));
     next.alloc = rename(next.alloc); next.prov = rename(next.prov);
     next.customFunds = [...mine, ...add];
-    const keep = state.stratBase; Object.assign(state, next); state.stratBase = keep;
+    const keep = state.stratBase, keepFav = { favs: state.favs, onlyFav: state.onlyFav };
+    Object.assign(state, next, keepFav); state.stratBase = keep; // los favoritos son tuyos: no cambian al cargar un supuesto
     refresh();
   }
 
@@ -695,8 +710,37 @@
   function renderCustomRows() {
     const sig = JSON.stringify(state.customFunds.map(d => [d.id, d.name, d.kind, d.mimic?.fund || '']));
     if (sig === customSig) return;
-    customSig = sig;
+    customSig = sig; layoutKey = null;
+    $$('.fund.custom').forEach(r => r.remove()); // los anteriores pueden estar en la lista principal o en la oculta
     $('#custom-funds').replaceChildren(...state.customFunds.map(customRow));
+  }
+
+  let restOpen = false, layoutKey = null; // restOpen: lista de fondos ocultos desplegada
+  const toggleFav = id => { state.favs = state.favs.includes(id) ? state.favs.filter(x => x !== id) : [...state.favs, id]; };
+
+  /** Con «Ver solo favoritos y activos» solo se ven los favoritos y los marcados; el resto pasa a una lista oculta debajo (que se puede desplegar). */
+  function layoutFunds() {
+    const byId = new Map($$('.fund').map(r => [r.dataset.fund, r])), main = [], rest = [];
+    for (const f of config.FUNDS) {
+      const r = byId.get(f.id); if (!r) continue;
+      (!state.onlyFav || state.favs.includes(f.id) || f.id in state.alloc ? main : rest).push(r);
+    }
+    const key = main.map(r => r.dataset.fund).join(',') + '|' + rest.map(r => r.dataset.fund).join(',');
+    if (key !== layoutKey) { // solo se mueven las filas si cambia la distribución (mover filas haría perder el foco del campo que se está escribiendo)
+      layoutKey = key;
+      $('#funds-main').replaceChildren(...main); $('#funds-rest').replaceChildren(...rest);
+    }
+    $('#funds-rest-wrap').hidden = rest.length === 0;
+    $('#funds-rest').hidden = !restOpen;
+    setText($('#funds-rest-toggle'), restOpen ? `▴ Ocultar los ${rest.length} fondos que no son favoritos ni están activos` : `▾ Mostrar los ${rest.length} fondos ocultos (ni favoritos ni activos)`);
+  }
+
+  /** Pasa todos los fondos que admiten los dos tipos (y los personalizados) a ETF o a fondo indexado. */
+  function setAllKinds(kind) {
+    for (const f of config.FUNDS) {
+      const both = f.custom || (f.providers.some(p => p.kind === 'etf') && f.providers.some(p => p.kind === 'index'));
+      if (both && optsOf(f).kind !== kind) changeKind(f, kind);
+    }
   }
 
   function customRow(d) {
@@ -706,6 +750,7 @@
         h('div', { class: 'cname' }, h('label', { for: 'f-' + d.id }, h('b', {}, d.name)), h('span', { class: 'cbadge' }, d.kind === 'etf' ? 'ETF' : 'Fondo indexado')),
         h('small', { class: 'csub' }), h('small', { class: 'cmoves' }),
         h('div', { class: 'cbtns' },
+          h('button', { type: 'button', class: 'cstar', 'data-cact': 'fav', 'data-cid': d.id, title: 'Marcar como favorito', 'aria-label': 'Favorito' }, '☆'),
           h('button', { type: 'button', 'data-cact': 'toggle', 'data-cid': d.id, title: 'Tipo, movimientos entre fondos e impuestos' }, '▾'),
           h('button', { type: 'button', 'data-cact': 'edit', 'data-cid': d.id, title: 'Editar fondo' }, '✎'),
           h('button', { type: 'button', 'data-cact': 'del', 'data-cid': d.id, title: 'Borrar fondo', class: 'cdel' }, '✕'))),
@@ -750,6 +795,8 @@
   }
 
   function updateFundPanel(row, f, withTitle = true) {
+    const star = $('.cstar', row), fav = state.favs.includes(f.id);
+    if (star) { setText(star, fav ? '★' : '☆'); star.classList.toggle('on', fav); star.title = fav ? 'Quitar de favoritos' : 'Marcar como favorito'; }
     const o = optsOf(f), open = openCustom.has(f.id), d = f.custom ? state.customFunds.find(x => x.id === f.id) : null;
     if (f.custom && !d) return;
     const both = f.custom || (f.providers.some(p => p.kind === 'etf') && f.providers.some(p => p.kind === 'index'));
@@ -865,7 +912,7 @@
   function deleteFund(id) {
     const d = state.customFunds.find(x => x.id === id); if (!d || !confirm(`¿Borrar «${d.name}»?`)) return;
     state.customFunds = state.customFunds.filter(x => x.id !== id);
-    delete state.alloc[id]; delete state.prov[id]; openCustom.delete(id);
+    delete state.alloc[id]; delete state.prov[id]; openCustom.delete(id); state.favs = state.favs.filter(x => x !== id);
     if (!Object.keys(state.alloc).length) state.alloc = { ...config.DEFAULT_STATE.alloc };
     refresh();
   }

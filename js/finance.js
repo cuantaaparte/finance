@@ -6,13 +6,15 @@
   const clamp = (x, a, b) => Math.min(Math.max(x, a), b);
   /** Gestor más barato del fondo; con `kind` ('etf' | 'index'), el más barato de ese tipo (si no hay de ese tipo, de cualquiera). */
   const cheapest = (f, kind) => { const l = kind ? f.providers.filter(p => p.kind === kind) : f.providers; return (l.length ? l : f.providers).reduce((a, b) => (b.ter < a.ter ? b : a)); };
+  /** Tipo por defecto: fondo indexado si el índice tiene alguno; si no, ETF. */
+  const defaultKind = f => (f.providers.some(p => p.kind === 'index') ? 'index' : 'etf');
   /** Tipo del fondo en este plan: el del gestor elegido; si no hay, el indicado en fundCfg; por defecto ETF. Los personalizados llevan su propio tipo. */
   const kindOf = (s, f) => {
     if (f.custom) return f.kind === 'etf' ? 'etf' : 'index';
     const p = f.providers.find(x => x.id === s.prov?.[f.id]);
     if (p) return p.kind;
     const k = s.fundCfg?.[f.id]?.kind;
-    return f.providers.some(x => x.kind === k) ? k : (f.providers.some(x => x.kind === 'etf') ? 'etf' : f.providers[0].kind);
+    return f.providers.some(x => x.kind === k) ? k : defaultKind(f);
   };
   /** Gestores del tipo elegido (si el índice no tiene de ese tipo, todos). */
   const providersOf = (s, f) => { const k = kindOf(s, f), l = f.providers.filter(p => p.kind === k); return l.length ? l : f.providers; };
@@ -198,7 +200,7 @@
     const useFunds = (ns, alloc) => {
       ns.fundCfg = {}; // cada estrategia usa sus fondos sin movimientos ni tipos elegidos por ti
       ns.alloc = structuredClone(alloc);
-      ns.prov = Object.fromEntries(Object.keys(alloc).map(id => [id, cheapest(config.FUNDS.find(f => f.id === id)).id]));
+      ns.prov = Object.fromEntries(Object.keys(alloc).map(id => { const f = config.FUNDS.find(x => x.id === id); return [id, cheapest(f, defaultKind(f)).id]; })); // gestor más barato del tipo por defecto
     };
     const A = config.STRATEGY_ALLOC;
     const defs = [
@@ -229,5 +231,5 @@
     });
   }
 
-  App.finance = { normalize, averageProfile, risk, portfolio, simulate, strategies, cheapest, providerOf, providersOf, kindOf, movesOf };
+  App.finance = { normalize, averageProfile, risk, portfolio, simulate, strategies, cheapest, providerOf, providersOf, kindOf, defaultKind, movesOf };
 })(window.App = window.App || {});

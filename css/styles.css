@@ -223,3 +223,14 @@ button.ghost{background:transparent;color:var(--text);border:1px solid var(--lin
 .field.is-orange>label{color:#fb923c}
 .field.is-orange input[type=range]{accent-color:#fb923c;filter:drop-shadow(0 0 2px rgba(251,146,60,.6))}
 .field.is-orange input[type=number]{border-color:#fb923c;box-shadow:0 0 3px rgba(251,146,60,.35)}
+
+/* ---- Favoritos y lista oculta ---- */
+.cright{margin-left:auto;display:flex;gap:.3rem;align-items:center}
+.ctoggle{margin-left:0!important}
+.cstar,.cbtns .cstar{background:transparent;color:var(--muted);border:1px solid var(--line);border-radius:7px;padding:0 .4rem;font:inherit;font-size:.82rem;line-height:1.45;cursor:pointer}
+.cstar:hover{border-color:#fbbf24;color:#fbbf24}
+.cstar.on,.cbtns .cstar.on{color:#fbbf24;border-color:rgba(251,191,36,.55)}
+.rest-toggle{display:block;width:100%;margin:.5rem 0 .2rem;background:transparent;color:var(--muted);border:1px dashed var(--line);border-radius:9px;padding:.3rem .6rem;font:inherit;font-size:.76rem;cursor:pointer;text-align:left}
+.rest-toggle:hover{color:var(--text);border-color:var(--accent)}
+#funds-rest-wrap[hidden],#funds-rest[hidden]{display:none}
+#funds-rest{opacity:.9}

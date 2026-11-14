@@ -22,6 +22,7 @@
   function encode(sc) {
     const used = sc.state.alloc || {}, state = { ...sc.state, customFunds: (sc.state.customFunds || []).filter(d => d.id in used), // solo viajan los fondos personalizados marcados, aunque estén al 0 %
       fundCfg: Object.fromEntries(Object.entries(sc.state.fundCfg || {}).filter(([id]) => id in used)) }; // y la configuración de los fondos marcados
+    delete state.favs; delete state.onlyFav; // los favoritos son una preferencia de vista, no parte del supuesto
     const data = toB64(new TextEncoder().encode(JSON.stringify({ v: VERSION, name: sc.name, state })));
     return `${PREFIX}:${hash(data)}:${data.length}:${data}`;
   }
@@ -52,6 +53,7 @@
       if (k in ENUMS) out[k] = ENUMS[k].includes(v) ? v : d;
       else if (k === 'histFrom' || k === 'histTo') out[k] = Number.isInteger(v) && v >= 1900 && v <= 2100 ? v : null;
       else if (k === 'touched') out[k] = { needs: !!(isObj(v) && v.needs), leisure: !!(isObj(v) && v.leisure) };
+      else if (k === 'favs') out.favs = Array.isArray(v) ? [...new Set(v.filter(x => typeof x === 'string' && x.length <= 40))].slice(0, 100) : [];
       else if (k === 'fundCfg') out.fundCfg = cleanFundCfg(src.fundCfg);
       else if (k === 'retGross') out[k] = Number.isFinite(v) && v >= 0 ? Math.min(1e7, v) : null;
       else if (k === 'customFunds') out.customFunds = App.customFunds.clean(src.customFunds); // fondos personalizados
