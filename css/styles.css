@@ -209,3 +209,17 @@ button.ghost{background:transparent;color:var(--text);border:1px solid var(--lin
 #risk-total.stale,#strategies.stale{opacity:.55}
 .cchk{margin:.1rem 0 0;font-size:.75rem}.chint{color:var(--muted);font-size:.68rem}.chint[hidden]{display:none}
 .fd-basis{display:flex;flex-wrap:wrap;gap:.15rem 1rem;margin:.3rem 0 .1rem}.fd-basis .check{margin:0;font-size:.76rem}
+
+/* ---- Tipo de producto, desplegable de todos los fondos y naranja suave ---- */
+.kbadge{font-size:.62rem;color:var(--muted);border:1px solid var(--line);border-radius:99px;padding:.02rem .4rem;white-space:nowrap}
+.ctoggle{background:transparent;color:var(--text);border:1px solid var(--line);border-radius:7px;padding:0 .4rem;font:inherit;font-size:.74rem;line-height:1.5;cursor:pointer;margin-left:auto}
+.ctoggle:hover{border-color:var(--accent);color:var(--accent)}
+.fund .cname{align-items:center}
+.fund .cmoves:empty{display:none}
+.kswitch{align-self:flex-start;margin:.1rem 0 .15rem}
+.kswitch input:disabled+i{opacity:.45}
+.khint[hidden],.tnote[hidden]{display:none}
+/* Retirada alta (naranja): mismo naranja que el indicador de arriba, con menos brillo que el rojo o el verde */
+.field.is-orange>label{color:#fb923c}
+.field.is-orange input[type=range]{accent-color:#fb923c;filter:drop-shadow(0 0 2px rgba(251,146,60,.6))}
+.field.is-orange input[type=number]{border-color:#fb923c;box-shadow:0 0 3px rgba(251,146,60,.35)}

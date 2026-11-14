@@ -1,37 +1,52 @@
 /* Configuración: catálogo de fondos (con varios gestores y su TER), valores por defecto y esquema del formulario. */
 (function (App) {
   'use strict';
-  const P = (id, name, ter) => ({ id, name, ter });
-  // id = ticker de Yahoo Finance usado como PROXY del índice. vol = volatilidad anual (%), yield = dividendo bruto (%),
-  // fallback = rentabilidad anual si no hay conexión. Los TER son ORIENTATIVOS: se sobrescriben con data/ters.js.
+  // Cada gestor es un ETF (E) o un fondo indexado (I): el TER de cada uno es distinto. Hay índices que solo tienen ETF en esta lista.
+  const E = (id, name, ter) => ({ id, name, ter, kind: 'etf' });
+  const I = (id, name, ter) => ({ id, name, ter, kind: 'index' });
+  // id = ticker de Yahoo Finance usado como PROXY del índice (o, si hay `proxy`, varios tickers que se mezclan a partes iguales). vol = volatilidad anual (%),
+  // yield = dividendo bruto (%), fallback = rentabilidad anual si no hay datos. Los TER de aquí son los de referencia: data/ters.js los sobrescribe.
   const FUNDS = [
     { id: 'VT', name: 'Global All-World (FTSE)', vol: 15, yield: 1.9, fallback: 0.080, providers: [
-      P('vt-vanguard', 'Vanguard FTSE All-World', 0.14), P('vt-invesco', 'Invesco FTSE All-World', 0.15),
-      P('vt-vanguard-allcap', 'Vanguard FTSE Global All-Cap', 0.07)] }, // lanzado en ago-2026; mismo índice que el VT estadounidense (todas las capitalizaciones)
+      E('vt-vanguard', 'Vanguard FTSE All-World', 0.14), E('vt-invesco', 'Invesco FTSE All-World', 0.15), E('vt-vanguard-allcap', 'Vanguard FTSE Global All-Cap', 0.07),
+      I('vt-vanguard-index', 'Vanguard Global Stock Index', 0.18)] },
     { id: 'ACWI', name: 'Global All-World (MSCI ACWI)', vol: 15, yield: 1.8, fallback: 0.080, providers: [
-      P('acwi-ishares', 'iShares MSCI ACWI', 0.20), P('acwi-spdr', 'SPDR MSCI ACWI', 0.12),
-      P('acwi-lg-imi', 'L&G MSCI ACWI IMI', 0.16)] }, // sigue el MSCI ACWI IMI (incluye small caps); como referencia de precios se usa el ACWI, muy parecido
+      E('acwi-ishares', 'iShares MSCI ACWI', 0.20), E('acwi-spdr', 'SPDR MSCI ACWI', 0.12), E('acwi-lg-imi', 'L&G MSCI ACWI IMI', 0.16),
+      E('acwi-amundi', 'Amundi Core MSCI ACWI (swap)', 0.09)] },
     { id: 'URTH', name: 'MSCI World', vol: 14, yield: 1.8, fallback: 0.085, providers: [
-      P('urth-ishares', 'iShares Core MSCI World', 0.20), P('urth-amundi', 'Amundi MSCI World', 0.12),
-      P('urth-fidelity', 'Fidelity Index World', 0.12), P('urth-xtrackers', 'Xtrackers MSCI World', 0.19)] },
+      E('urth-ishares', 'iShares Core MSCI World', 0.20), E('urth-amundi', 'Amundi Core MSCI World', 0.12), E('urth-xtrackers', 'Xtrackers MSCI World', 0.12), E('urth-spdr', 'SPDR MSCI World', 0.12),
+      I('urth-fidelity', 'Fidelity MSCI World Index', 0.12), I('urth-ishares-index', 'iShares Developed World Index', 0.12), I('urth-ishares-s', 'iShares Developed World Index (clase S, MyInvestor)', 0.06),
+      I('urth-amundi-index', 'Amundi Index MSCI World', 0.30)] },
     { id: 'SPY', name: 'S&P 500 (EE. UU.)', vol: 16, yield: 1.3, fallback: 0.100, providers: [
-      P('spy-vanguard', 'Vanguard S&P 500', 0.07), P('spy-ishares', 'iShares Core S&P 500', 0.07),
-      P('spy-spdr', 'SPDR S&P 500', 0.03), P('spy-amundi', 'Amundi S&P 500', 0.15)] },
+      E('spy-vanguard', 'Vanguard S&P 500', 0.07), E('spy-ishares', 'iShares Core S&P 500', 0.07), E('spy-spdr', 'SPDR S&P 500', 0.03), E('spy-amundi', 'Amundi Core S&P 500 (swap)', 0.05),
+      I('spy-vanguard-index', 'Vanguard U.S. 500 Stock Index', 0.10), I('spy-fidelity-index', 'Fidelity S&P 500 Index', 0.06), I('spy-ishares-index', 'iShares US Index', 0.12),
+      I('spy-ishares-s', 'iShares US Equity Index (clase S, MyInvestor)', 0.05)] },
     { id: 'QQQ', name: 'Nasdaq 100', vol: 21, yield: 0.6, fallback: 0.140, providers: [
-      P('qqq-invesco', 'Invesco EQQQ Nasdaq-100', 0.30), P('qqq-ishares', 'iShares Nasdaq 100', 0.33),
-      P('qqq-amundi', 'Amundi Nasdaq-100', 0.23), P('qqq-xtrackers', 'Xtrackers Nasdaq 100', 0.20)] },
+      E('qqq-invesco', 'Invesco EQQQ Nasdaq-100', 0.30), E('qqq-ishares', 'iShares Nasdaq 100', 0.30), E('qqq-amundi', 'Amundi Nasdaq-100 (swap)', 0.22), E('qqq-xtrackers', 'Xtrackers Nasdaq 100', 0.20),
+      E('qqq-bnp', 'BNP Paribas Easy Nasdaq 100', 0.14),
+      I('qqq-myinvestor', 'MyInvestor Nasdaq 100', 0.41), I('qqq-naranja', 'Fondo Naranja Nasdaq 100 (ING)', 1.07)] },
     { id: 'VGK', name: 'Europa', vol: 17, yield: 3.0, fallback: 0.060, providers: [
-      P('vgk-vanguard', 'Vanguard FTSE Developed Europe', 0.10), P('vgk-ishares', 'iShares Core MSCI Europe', 0.12),
-      P('vgk-amundi', 'Amundi Stoxx Europe 600', 0.07)] },
+      E('vgk-vanguard', 'Vanguard FTSE Developed Europe', 0.10), E('vgk-ishares', 'iShares Core MSCI Europe', 0.12), E('vgk-amundi', 'Amundi Stoxx Europe 600', 0.07),
+      I('vgk-vanguard-index', 'Vanguard European Stock Index', 0.12)] },
     { id: 'EWJ', name: 'Japón', vol: 17, yield: 2.0, fallback: 0.050, providers: [
-      P('ewj-ishares', 'iShares Core MSCI Japan IMI', 0.15), P('ewj-amundi', 'Amundi MSCI Japan', 0.12)] },
+      E('ewj-ishares', 'iShares Core MSCI Japan IMI', 0.12), E('ewj-amundi', 'Amundi MSCI Japan', 0.12)] },
     { id: 'VWO', name: 'Emergentes (FTSE)', vol: 19, yield: 2.8, fallback: 0.040, providers: [
-      P('vwo-vanguard', 'Vanguard FTSE Emerging Markets', 0.17)] },
+      E('vwo-vanguard', 'Vanguard FTSE Emerging Markets', 0.17),
+      I('vwo-vanguard-index', 'Vanguard Emerging Markets Stock Index', 0.23)] },
     { id: 'EEM', name: 'Emergentes (MSCI EM)', vol: 19, yield: 2.7, fallback: 0.040, providers: [
-      P('eem-ishares', 'iShares Core MSCI EM IMI', 0.18), P('eem-amundi', 'Amundi MSCI Emerging Markets', 0.14),
-      P('eem-fidelity', 'Fidelity Index Emerging Markets', 0.20), P('eem-xtrackers', 'Xtrackers MSCI Emerging Markets', 0.18)] },
+      E('eem-ishares', 'iShares Core MSCI EM IMI', 0.18), E('eem-amundi', 'Amundi MSCI Emerging Markets', 0.14), E('eem-xtrackers', 'Xtrackers MSCI Emerging Markets', 0.18),
+      I('eem-fidelity', 'Fidelity MSCI Emerging Markets Index', 0.20), I('eem-ishares-s', 'iShares Emerging Markets Index (clase S, MyInvestor)', 0.16)] },
     { id: 'AGG', name: 'Bonos agregados (RF)', vol: 5, yield: 3.2, fallback: 0.020, providers: [
-      P('agg-vanguard', 'Vanguard Global Aggregate Bond', 0.08), P('agg-ishares', 'iShares Global Aggregate Bond', 0.10)] },
+      E('agg-vanguard', 'Vanguard Global Aggregate Bond', 0.08), E('agg-ishares', 'iShares Global Aggregate Bond', 0.10),
+      I('agg-vanguard-index', 'Vanguard Global Bond Index (cubierto a EUR)', 0.15)] },
+    // Utilities = empresas de servicios públicos (electricidad, gas y agua). Proxy: iShares Global Utilities (JXI). Solo hay ETF de este sector.
+    { id: 'JXI', name: 'Utilities globales (electricidad, gas y agua)', vol: 15, yield: 3.3, fallback: 0.050, providers: [
+      E('util-xtrackers', 'Xtrackers MSCI World Utilities', 0.25), E('util-amundi', 'Amundi S&P Global Utilities ESG', 0.18), E('util-spdr', 'SPDR MSCI World Utilities', 0.30)] },
+    // No existe ningún ETF que junte energía limpia y nuclear (son índices distintos): se modela como una mezcla 50/50 de un ETF de cada tipo
+    // (proxy = iShares Global Clean Energy ICLN + VanEck Uranium & Nuclear NLR) y el TER es la media de los dos.
+    { id: 'CLEAN', proxy: ['ICLN', 'NLR'], name: 'Energía limpia + nuclear (mezcla 50/50)', vol: 26, yield: 2.0, fallback: 0.030, providers: [
+      E('clean-wisdomtree', 'WisdomTree Renewable Energy + WisdomTree Uranium & Nuclear', 0.45), E('clean-invesco-vaneck', 'Invesco Global Clean Energy + VanEck Uranium & Nuclear', 0.575),
+      E('clean-ishares-vaneck', 'iShares Global Clean Energy Transition + VanEck Uranium & Nuclear', 0.60)] },
   ];
 
   const DEFAULT_STATE = {
@@ -49,6 +64,7 @@
     retGross: null,   // en modo bruto: el importe bruto mensual que el usuario quiere cobrar (el neto se recalcula si cambia otro dato)
     retBasis: 'net',  // el importe "Ingresos de la inversión" se introduce en 'net' (tras impuestos) o 'gross' (bruto)
     customFunds: [],  // fondos personalizados (ver customFunds.js)
+    fundCfg: {},      // por fondo del catálogo: { kind: 'etf'|'index', perYear, pct, taxed } (tipo y movimientos entre fondos)
     tax: { country: 'ES', scale: null, custom: null }, // impuestos de la jubilación: país (data/tax-data.js) o 'CUSTOM' con tramos propios
   };
 

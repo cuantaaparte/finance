@@ -31,15 +31,38 @@ async function stooq(id) { // alternativa si Yahoo falla
 }
 
 const series = {}; let ok = 0;
-for (const f of config.FUNDS) {
-  let pts = null;
+
+/** Histórico mensual de un ticker (Yahoo y, si falla, Stooq). Devuelve null si no hay datos suficientes. */
+async function fetchSeries(id) {
   for (const source of [yahoo, stooq]) {
-    try { pts = (await source(f.id)).filter(p => p[1] > 0).map(([t, p]) => [t, Math.round(p * 1e4) / 1e4]); pts = oneForMonth(pts); if (pts.length > 12) break; pts = null; }
-    catch (e) { console.warn(`${f.id}: ${source.name} falló (${e.message})`); }
+    try { const pts = oneForMonth((await source(id)).filter(p => p[1] > 0).map(([t, p]) => [t, Math.round(p * 1e4) / 1e4])); if (pts.length > 12) return pts; }
+    catch (e) { console.warn(`${id}: ${source.name} falló (${e.message})`); }
   }
-  if (pts) { series[f.id] = pts; ok++; console.log(`${f.id}: ${pts.length} puntos`); }
+  return null;
+}
+
+/** Mezcla a partes iguales (rebalanceada cada mes) varios históricos: sirve para fondos sin un único índice, como energía limpia + nuclear. */
+function blend(parts) {
+  const maps = parts.map(p => new Map(p.map(x => [monthOf(x[0]), x])));
+  const months = [...maps[0].keys()].filter(k => maps.every(m => m.has(k))).sort((a, b) => a - b);
+  if (months.length < 13) return null;
+  let level = 100;
+  const out = [[maps[0].get(months[0])[0], level]];
+  for (let i = 1; i < months.length; i++) {
+    const r = maps.reduce((a, m) => a + m.get(months[i])[1] / m.get(months[i - 1])[1] - 1, 0) / maps.length;
+    level *= 1 + r;
+    out.push([maps[0].get(months[i])[0], Math.round(level * 1e4) / 1e4]);
+  }
+  return out;
+}
+
+for (const f of config.FUNDS) {
+  const tickers = f.proxy || [f.id]; // f.proxy: varios tickers que se mezclan 50/50
+  const parts = [];
+  for (const t of tickers) { parts.push(await fetchSeries(t)); await new Promise(r => setTimeout(r, 400)); }
+  const pts = parts.every(Boolean) ? (parts.length === 1 ? parts[0] : blend(parts)) : null;
+  if (pts) { series[f.id] = pts; ok++; console.log(`${f.id}: ${pts.length} puntos${tickers.length > 1 ? ' (mezcla ' + tickers.join(' + ') + ')' : ''}`); }
   else if (old[f.id]) { series[f.id] = old[f.id]; console.warn(`${f.id}: se mantienen los datos anteriores`); }
-  await new Promise(r => setTimeout(r, 400));
 }
 if (!ok) { console.error('No se pudo descargar ningún fondo.'); process.exit(1); }
 

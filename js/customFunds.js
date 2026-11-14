@@ -40,7 +40,7 @@
   /** Convierte la definición en un fondo del catálogo (misma forma que los de config.js). */
   function build(d, e = effective(d, () => ({ rate: 0 }))) {
     return { id: d.id, custom: true, kind: d.kind, name: d.name, vol: e.vol, yield: e.yield, fallback: e.rate / 100, mimic: d.mimic,
-      moves: { perYear: d.perYear, pct: d.pct, taxed: !!d.taxed }, providers: [{ id: d.id, name: 'Personalizado', ter: e.ter }] };
+      moves: { perYear: d.perYear, pct: d.pct, taxed: !!d.taxed }, providers: [{ id: d.id, name: 'Personalizado', ter: e.ter, kind: d.kind }] };
   }
 
   /** Valida unos fondos importados o guardados (se tratan como NO fiables). */

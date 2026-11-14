@@ -4,8 +4,25 @@
   'use strict';
   const { config } = App;
   const clamp = (x, a, b) => Math.min(Math.max(x, a), b);
-  const cheapest = f => f.providers.reduce((a, b) => (b.ter < a.ter ? b : a));
-  const providerOf = (s, f) => f.providers.find(p => p.id === s.prov?.[f.id]) || f.providers[0];
+  /** Gestor más barato del fondo; con `kind` ('etf' | 'index'), el más barato de ese tipo (si no hay de ese tipo, de cualquiera). */
+  const cheapest = (f, kind) => { const l = kind ? f.providers.filter(p => p.kind === kind) : f.providers; return (l.length ? l : f.providers).reduce((a, b) => (b.ter < a.ter ? b : a)); };
+  /** Tipo del fondo en este plan: el del gestor elegido; si no hay, el indicado en fundCfg; por defecto ETF. Los personalizados llevan su propio tipo. */
+  const kindOf = (s, f) => {
+    if (f.custom) return f.kind === 'etf' ? 'etf' : 'index';
+    const p = f.providers.find(x => x.id === s.prov?.[f.id]);
+    if (p) return p.kind;
+    const k = s.fundCfg?.[f.id]?.kind;
+    return f.providers.some(x => x.kind === k) ? k : (f.providers.some(x => x.kind === 'etf') ? 'etf' : f.providers[0].kind);
+  };
+  /** Gestores del tipo elegido (si el índice no tiene de ese tipo, todos). */
+  const providersOf = (s, f) => { const k = kindOf(s, f), l = f.providers.filter(p => p.kind === k); return l.length ? l : f.providers; };
+  const providerOf = (s, f) => { const l = providersOf(s, f); return l.find(p => p.id === s.prov?.[f.id]) || l[0]; };
+  /** Movimientos entre fondos de un fondo: los de un personalizado, o los de fundCfg para uno del catálogo (null = sin movimientos). */
+  const movesOf = (s, f) => {
+    if (f.moves) return f.moves;
+    const c = s.fundCfg?.[f.id];
+    return c ? { perYear: c.perYear ?? 0, pct: c.pct ?? 10, taxed: c.taxed ?? kindOf(s, f) === 'etf' } : null;
+  };
 
   /** Mantiene coherentes sueldo/gastos/ocio/inversión (nunca superan el sueldo).
    *  needsWant / leisureWant / investWant guardan lo que el usuario pidió: si el sueldo baja un momento (p. ej. al teclear 2000 cifra a cifra)
@@ -55,8 +72,9 @@
     rows.forEach(([f, w]) => {
       const k = sum > 0 ? w / sum : 1 / rows.length, r = rateOf(f).rate - providerOf(s, f).ter / 100;
       let drag = 0;
-      if (f.moves?.taxed && f.moves.perYear > 0 && f.moves.pct > 0) { // fondos personalizados que pagan impuestos al moverse
-        const mv = moveDrag(r, (f.moves.perYear * f.moves.pct) / 100, tau);
+      const mvc = movesOf(s, f);
+      if (mvc?.taxed && mvc.perYear > 0 && mvc.pct > 0) { // fondos que pagan impuestos al moverse
+        const mv = moveDrag(r, (mvc.perYear * mvc.pct) / 100, tau);
         drag = mv.drag; realize += k * mv.realize * (1 - tau);
       }
       price += k * (r - drag);
@@ -178,6 +196,7 @@
   /** Estrategias: planes COMPLETOS (fondos, gestores, reparto, ahorro y retirada) calculados siempre desde `base`. */
   function strategies(base, rateOf, inputsOf) {
     const useFunds = (ns, alloc) => {
+      ns.fundCfg = {}; // cada estrategia usa sus fondos sin movimientos ni tipos elegidos por ti
       ns.alloc = structuredClone(alloc);
       ns.prov = Object.fromEntries(Object.keys(alloc).map(id => [id, cheapest(config.FUNDS.find(f => f.id === id)).id]));
     };
@@ -210,5 +229,5 @@
     });
   }
 
-  App.finance = { normalize, averageProfile, risk, portfolio, simulate, strategies, cheapest, providerOf };
+  App.finance = { normalize, averageProfile, risk, portfolio, simulate, strategies, cheapest, providerOf, providersOf, kindOf, movesOf };
 })(window.App = window.App || {});

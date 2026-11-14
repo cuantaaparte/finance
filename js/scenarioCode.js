@@ -20,9 +20,27 @@
 
   /** Convierte un supuesto {name, state} en un código de una sola línea. */
   function encode(sc) {
-    const used = sc.state.alloc || {}, state = { ...sc.state, customFunds: (sc.state.customFunds || []).filter(d => d.id in used) }; // solo viajan los fondos personalizados marcados, aunque estén al 0 %
+    const used = sc.state.alloc || {}, state = { ...sc.state, customFunds: (sc.state.customFunds || []).filter(d => d.id in used), // solo viajan los fondos personalizados marcados, aunque estén al 0 %
+      fundCfg: Object.fromEntries(Object.entries(sc.state.fundCfg || {}).filter(([id]) => id in used)) }; // y la configuración de los fondos marcados
     const data = toB64(new TextEncoder().encode(JSON.stringify({ v: VERSION, name: sc.name, state })));
     return `${PREFIX}:${hash(data)}:${data.length}:${data}`;
+  }
+
+  /** Tipo y movimientos de los fondos del catálogo: solo fondos que existen y campos con su tipo y rango. */
+  function cleanFundCfg(src) {
+    const out = {};
+    if (!isObj(src)) return out;
+    for (const f of config.FUNDS.filter(x => !x.custom)) {
+      const c = src[f.id];
+      if (!isObj(c)) continue;
+      const o = {};
+      if (f.providers.some(p => p.kind === c.kind)) o.kind = c.kind;
+      if (Number.isFinite(c.perYear)) o.perYear = Math.round(Math.min(12, Math.max(0, c.perYear)));
+      if (Number.isFinite(c.pct)) o.pct = Math.min(100, Math.max(0, c.pct));
+      if (typeof c.taxed === 'boolean') o.taxed = c.taxed;
+      if (Object.keys(o).length) out[f.id] = o;
+    }
+    return out;
   }
 
   /** Valida y limpia un estado importado: parte de los valores por defecto y solo acepta lo que reconoce. */
@@ -34,6 +52,7 @@
       if (k in ENUMS) out[k] = ENUMS[k].includes(v) ? v : d;
       else if (k === 'histFrom' || k === 'histTo') out[k] = Number.isInteger(v) && v >= 1900 && v <= 2100 ? v : null;
       else if (k === 'touched') out[k] = { needs: !!(isObj(v) && v.needs), leisure: !!(isObj(v) && v.leisure) };
+      else if (k === 'fundCfg') out.fundCfg = cleanFundCfg(src.fundCfg);
       else if (k === 'retGross') out[k] = Number.isFinite(v) && v >= 0 ? Math.min(1e7, v) : null;
       else if (k === 'customFunds') out.customFunds = App.customFunds.clean(src.customFunds); // fondos personalizados
       else if (k === 'tax') out.tax = App.taxes.clean(src.tax); // país o tramos personalizados (se validan en taxes.js)
