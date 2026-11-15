@@ -62,7 +62,7 @@ input[type=checkbox]{width:1.2rem;height:1.2rem;margin:0;flex:none;accent-color:
 .fund .fmain{display:flex;flex-direction:column;min-width:0;gap:.15rem}
 .fund b{font-size:.82rem}
 .fund select{width:100%;font-size:.72rem;padding:.15rem .25rem}
-.fund .rcell{display:flex;flex-direction:column;align-items:flex-end;line-height:1.15}
+.fund .rcell{display:flex;flex-direction:column;align-items:flex-end;line-height:1.15;gap:.15rem}
 .fund .ret{font-weight:600;color:var(--ok);font-size:.82rem}.fund .ret.neg{color:var(--bad)}
 .fund .ter{color:var(--muted);font-size:.68rem}
 .fund input[type=number]{width:3.6rem}
@@ -185,7 +185,9 @@ button.ghost{background:transparent;color:var(--text);border:1px solid var(--lin
 .tools .plus::after{width:2px;height:.8rem}
 .fund.custom{--cc:#2dd4bf;border-left:3px solid var(--cc);background:linear-gradient(90deg,rgba(45,212,191,.09),transparent 70%);padding-left:.45rem;margin-left:-.1rem;border-radius:0 8px 8px 0}
 .fund.custom .ret{color:var(--cc)}.fund.custom .ret.neg{color:var(--bad)}
-.cname{display:flex;align-items:center;gap:.4rem;flex-wrap:wrap}
+.cname{display:flex;align-items:center;gap:.4rem;min-width:0}
+.cname label{flex:1;min-width:0;display:flex;align-items:center;cursor:pointer}
+.cname label b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block}
 .cbadge{font-size:.62rem;color:#0b0f17;background:var(--cc);border-radius:99px;padding:.02rem .4rem;font-weight:600;white-space:nowrap}
 .csub,.cmoves{color:var(--muted);font-size:.68rem;line-height:1.25}
 .cbtns{display:flex;gap:.3rem;margin-top:.15rem}
@@ -211,7 +213,7 @@ button.ghost{background:transparent;color:var(--text);border:1px solid var(--lin
 .fd-basis{display:flex;flex-wrap:wrap;gap:.15rem 1rem;margin:.3rem 0 .1rem}.fd-basis .check{margin:0;font-size:.76rem}
 
 /* ---- Tipo de producto, desplegable de todos los fondos y naranja suave ---- */
-.kbadge{font-size:.62rem;color:var(--muted);border:1px solid var(--line);border-radius:99px;padding:.02rem .4rem;white-space:nowrap}
+.kbadge{font-size:.62rem;color:var(--muted);border:1px solid var(--line);border-radius:99px;padding:.02rem .4rem;white-space:nowrap;margin-bottom:0}
 .ctoggle{background:transparent;color:var(--text);border:1px solid var(--line);border-radius:7px;padding:0 .4rem;font:inherit;font-size:.74rem;line-height:1.5;cursor:pointer;margin-left:auto}
 .ctoggle:hover{border-color:var(--accent);color:var(--accent)}
 .fund .cname{align-items:center}
@@ -225,7 +227,7 @@ button.ghost{background:transparent;color:var(--text);border:1px solid var(--lin
 .field.is-orange input[type=number]{border-color:#fb923c;box-shadow:0 0 3px rgba(251,146,60,.35)}
 
 /* ---- Favoritos y lista oculta ---- */
-.cright{margin-left:auto;display:flex;gap:.3rem;align-items:center}
+.cright{margin-left:auto;display:flex;gap:.3rem;align-items:center;flex-shrink:0}
 .ctoggle{margin-left:0!important}
 .cstar,.cbtns .cstar{background:transparent;color:var(--muted);border:1px solid var(--line);border-radius:7px;padding:0 .4rem;font:inherit;font-size:.82rem;line-height:1.45;cursor:pointer}
 .cstar:hover{border-color:#fbbf24;color:#fbbf24}

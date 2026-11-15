@@ -1,15 +1,15 @@
 /* TER anuales (%) de cada gestor, separados por tipo: ETF y fondo indexado. Se aplican al abrir la web. Edita aquí cuando un gestor cambie su comisión.
-   Revisión del 2026-11-14 contra justETF, Finect, Rankia, las webs de las gestoras y las fichas de MyInvestor.
+   Revisión del 2026-11-15 contra justETF, Finect, Rankia, las webs de las gestoras y las fichas de MyInvestor.
    ETF corregidos: iShares Nasdaq 100 0,33 → 0,30 (el 0,33 era la clase con cobertura), Amundi Nasdaq-100 0,23 → 0,22, Xtrackers MSCI World 0,19 → 0,12,
    Amundi S&P 500 0,15 → 0,05 (Amundi Core), iShares Core MSCI Japan IMI 0,15 → 0,12.
-   Fondos indexados (fichas de MyInvestor): L&G MSCI ACWI IMI 0,16 (es un fondo indexado, no un ETF), Fidelity MSCI World 0,12, Fidelity MSCI Europe 0,10, iShares Europe Index 0,10,
+   Fondos indexados (fichas de MyInvestor): L&G MSCI ACWI IMI 0,16 (es un fondo indexado, no un ETF), Fidelity MSCI World 0,10, Fidelity MSCI Europe 0,10, iShares Europe Index 0,10,
    Vanguard European 0,12, Amundi Index MSCI Europe 0,15, Fidelity MSCI EM 0,20, Amundi Index MSCI EM 0,20, iShares EM Index 0,20 y (clase S) 0,16, Vanguard EM 0,23.
-   Con el TER recortado en la captura (solo se veía el primer decimal «0,1»): Fidelity S&P 500 y Fidelity MSCI Japan se han puesto a 0,12 (como Fidelity MSCI World): confírmalos.
+   Fidelity S&P 500 y Fidelity MSCI Japan se han puesto a 0,10.
    SIN contrastar: vt-invesco, vgk-vanguard, vgk-amundi, agg-vanguard, agg-ishares, qqq-bnp, spy-amundi-index (0,30 por analogía con Amundi World AE-C), los TER de las mezclas de energía
    (media de los dos productos; DNB Renewable Energy 1,55 y DNB Nuclear Energy 0,40 según MyInvestor). Revísalos en la ficha de cada producto (campo "gastos corrientes"/OCF). */
 window.App = window.App || {};
 window.App.tersData = {
-  "updated": "2026-11-14",
+  "updated": "2026-11-15",
   "ters": {
     "vt-vanguard-index": 0.18,
     "vt-vanguard-allcap": 0.07,
@@ -20,7 +20,7 @@ window.App.tersData = {
     "acwi-spdr": 0.12,
     "acwi-ishares": 0.2,
     "urth-ishares-s": 0.06,
-    "urth-fidelity": 0.12,
+    "urth-fidelity": 0.1,
     "urth-ishares-index": 0.12,
     "urth-amundi-index": 0.3,
     "urth-amundi": 0.12,
@@ -29,7 +29,7 @@ window.App.tersData = {
     "urth-ishares": 0.2,
     "spy-ishares-s": 0.05,
     "spy-vanguard-index": 0.1,
-    "spy-fidelity-index": 0.12,
+    "spy-fidelity-index": 0.1,
     "spy-ishares-index": 0.12,
     "spy-amundi-index": 0.3,
     "spy-spdr": 0.03,
@@ -50,7 +50,7 @@ window.App.tersData = {
     "vgk-amundi": 0.07,
     "vgk-vanguard": 0.1,
     "vgk-ishares": 0.12,
-    "ewj-fidelity-index": 0.12,
+    "ewj-fidelity-index": 0.1,
     "ewj-ishares": 0.12,
     "ewj-amundi": 0.12,
     "vwo-vanguard-index": 0.23,

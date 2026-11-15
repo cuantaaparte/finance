@@ -106,7 +106,7 @@
       h('label', { class: 'switch fswitch', title: 'Solo se ven los fondos que has marcado con la estrella o que tienes activados; el resto queda en una lista oculta debajo que puedes desplegar.' },
         h('input', { type: 'checkbox', 'data-key': 'onlyFav' }), h('i'), h('span', {}, 'Ver solo favoritos y activos')),
       h('label', { class: 'switch fswitch', title: 'Pasa todos los fondos a fondo indexado o a ETF (los que tengan los dos tipos). Si están mezclados, el interruptor queda a medias.' },
-        h('span', {}, 'Todos: fondo indexado'), h('input', { type: 'checkbox', id: 'all-kind' }), h('i'), h('span', {}, 'ETF'))));
+        h('span', {}, 'Todos: Fondo'), h('input', { type: 'checkbox', id: 'all-kind' }), h('i'), h('span', {}, 'ETF'))));
     box.append(h('div', { class: 'tools' }, h('small', { id: 'ter-info' }),
       h('span', { class: 'tools-btns' },
         h('button', { type: 'button', class: 'plus', title: 'Añadir un fondo personalizado', 'aria-label': 'Añadir fondo personalizado', onclick: () => openFundDialog() }),
@@ -116,13 +116,16 @@
     config.FUNDS.forEach(f => main.append(h('div', { class: 'fund', 'data-fund': f.id },
       h('input', { type: 'checkbox', id: 'f-' + f.id, 'data-fcheck': f.id }),
       h('div', { class: 'fmain' },
-        h('div', { class: 'cname' }, h('label', { for: 'f-' + f.id }, h('b', {}, f.name)), h('span', { class: 'kbadge' }),
+        h('div', { class: 'cname' }, h('label', { for: 'f-' + f.id, title: f.name }, h('b', {}, f.name)),
           h('span', { class: 'cright' },
             h('button', { type: 'button', class: 'cstar', 'data-cact': 'fav', 'data-cid': f.id, title: 'Marcar como favorito', 'aria-label': 'Favorito' }, '☆'),
-            h('button', { type: 'button', class: 'ctoggle', 'data-cact': 'toggle', 'data-cid': f.id, title: 'Tipo (ETF o fondo indexado), movimientos entre fondos e impuestos' }, '▾'))),
+            h('button', { type: 'button', class: 'ctoggle', 'data-cact': 'toggle', 'data-cid': f.id, title: 'Tipo (ETF o Fondo), movimientos entre fondos e impuestos' }, '▾'))),
         h('select', { 'data-fprov': f.id, 'aria-label': 'Gestor' }),
         h('small', { class: 'cmoves' })),
-      h('div', { class: 'rcell' }, h('span', { class: 'ret' }), h('small', { class: 'ter' })),
+      h('div', { class: 'rcell' },
+        h('span', { class: 'kbadge' }),
+        h('span', { class: 'ret' }),
+        h('small', { class: 'ter' })),
       h('input', { type: 'number', min: 0, max: 100, step: 'any', 'data-fw': f.id }),
       h('span', { class: 'suf' }, '%'),
       fundPanel(f))));
@@ -446,7 +449,7 @@
         h('b', {}, st.title), h('p', {}, st.unavailable ? 'No es alcanzable con tus datos actuales.' : st.desc),
         st.unavailable ? null : h('div', { class: 'tags' },
           h('span', {}, `Trabajas ${st.state.workYears} años`), h('span', {}, `Capital ${eur.format(st.res.capital)}`),
-          h('span', { title: `Bruto que sale de las inversiones el primer año: ${eur.format(st.res.spend)}/mes` }, `Retiras ${eur.format(st.res.net)}/mes netos`), h('span', { class: st.risk.color ? 'risk-' + st.risk.color : '' }, `Riesgo ${st.risk.level} (${st.risk.score}/100)`)))));
+          h('span', { title: `Bruto que sale de las inversiones el primer año: ${eur.format(st.res.spend)}/mes` }, `Retiras ${eur.format(st.res.net)}/mes netos`), h('span', { class: st.risk.color ? 'risk-' + st.risk.color : '' }, `Riesgo ${st.risk.label} (${st.risk.score}/100)`)))));
   }
 
   /* ---------- Mis supuestos: guardar, renombrar, exportar e importar ---------- */
@@ -747,24 +750,27 @@
     return h('div', { class: 'fund custom', 'data-fund': d.id, 'data-custom': '1' },
       h('input', { type: 'checkbox', id: 'f-' + d.id, 'data-fcheck': d.id }),
       h('div', { class: 'fmain' },
-        h('div', { class: 'cname' }, h('label', { for: 'f-' + d.id }, h('b', {}, d.name)), h('span', { class: 'cbadge' }, d.kind === 'etf' ? 'ETF' : 'Fondo indexado')),
+        h('div', { class: 'cname' }, h('label', { for: 'f-' + d.id, title: d.name }, h('b', {}, d.name))),
         h('small', { class: 'csub' }), h('small', { class: 'cmoves' }),
         h('div', { class: 'cbtns' },
           h('button', { type: 'button', class: 'cstar', 'data-cact': 'fav', 'data-cid': d.id, title: 'Marcar como favorito', 'aria-label': 'Favorito' }, '☆'),
           h('button', { type: 'button', 'data-cact': 'toggle', 'data-cid': d.id, title: 'Tipo, movimientos entre fondos e impuestos' }, '▾'),
           h('button', { type: 'button', 'data-cact': 'edit', 'data-cid': d.id, title: 'Editar fondo' }, '✎'),
           h('button', { type: 'button', 'data-cact': 'del', 'data-cid': d.id, title: 'Borrar fondo', class: 'cdel' }, '✕'))),
-      h('div', { class: 'rcell' }, h('span', { class: 'ret' }), h('small', { class: 'ter' })),
+      h('div', { class: 'rcell' },
+        h('span', { class: 'kbadge' }, d.kind === 'etf' ? 'ETF' : 'Fondo'),
+        h('span', { class: 'ret' }),
+        h('small', { class: 'ter' })),
       h('input', { type: 'number', min: 0, max: 100, step: 'any', 'data-fw': d.id }),
       h('span', { class: 'suf' }, '%'),
       fundPanel({ id: d.id }));
   }
 
-  /** Panel desplegable de cualquier fondo: tipo (ETF o fondo indexado), movimientos al año, % que se mueve e impuestos de esos movimientos. */
+  /** Panel desplegable de cualquier fondo: tipo (ETF o Fondo), movimientos al año, % que se mueve e impuestos de esos movimientos. */
   function fundPanel(f) {
     const slider = (label, key, max) => h('label', { class: 'cslide' }, h('span', {}, label), h('input', { type: 'range', min: 0, max, step: 1, [`data-${key}`]: f.id }), h('em', { 'data-out': key }));
     return h('div', { class: 'cpanel', hidden: '' },
-      h('label', { class: 'switch kswitch', title: 'Tipo de producto: cambia la lista de gestores y su TER' }, h('span', {}, 'Fondo indexado'), h('input', { type: 'checkbox', 'data-ckind': f.id }), h('i'), h('span', {}, 'ETF')),
+      h('label', { class: 'switch kswitch', title: 'Tipo de producto: cambia la lista de gestores y su TER' }, h('span', {}, 'Fondo'), h('input', { type: 'checkbox', 'data-ckind': f.id }), h('i'), h('span', {}, 'ETF')),
       h('small', { class: 'chint khint' }),
       slider('Movimientos al año', 'cperyear', 12), slider('% del fondo que mueves cada vez', 'cpct', 100),
       h('label', { class: 'check cchk' }, h('input', { type: 'checkbox', 'data-ctaxed': f.id }), 'Se pagan impuestos en estos movimientos'),
@@ -806,11 +812,12 @@
       setText($(`[data-out="${k}"]`, row), fmt(v));
     });
     const ck = $('[data-ckind]', row); if (ck.checked !== (o.kind === 'etf')) ck.checked = o.kind === 'etf'; ck.disabled = !both;
-    const kh = $('.khint', row); kh.hidden = both; setText(kh, both ? '' : `En esta lista, este índice solo tiene ${f.providers[0].kind === 'etf' ? 'ETF' : 'fondos indexados'}.`);
+    const kh = $('.khint', row); kh.hidden = both; setText(kh, both ? '' : `En esta lista, este índice solo tiene ${f.providers[0].kind === 'etf' ? 'ETF' : 'fondos'}.`);
     const tx = $('[data-ctaxed]', row); if (tx.checked !== o.taxed) tx.checked = o.taxed;
     $('.tnote', row).hidden = o.taxed; // sin impuestos los movimientos no cambian el resultado
     setText($('.cmoves', row), o.perYear > 0 && o.pct > 0 ? `${o.perYear} mov./año · mueve el ${comma(o.pct, 1)} % · ${o.taxed ? 'con impuestos' : 'sin impuestos'}` : (f.custom ? 'Sin movimientos' : ''));
-    if (!f.custom) { setText($('.kbadge', row), o.kind === 'etf' ? 'ETF' : 'Fondo indexado'); return; }
+    setText($('.kbadge', row), o.kind === 'etf' ? 'ETF' : 'Fondo');
+    if (!f.custom) return;
     const bn = baseName(d);
     setText($('.csub', row), bn ? `Personalizado · imita a ${bn}` : 'Personalizado · fondo inventado');
     if (withTitle) { // se añade a la explicación de TER e inflación que ya puso renderFunds, sin borrarla
@@ -845,12 +852,12 @@
     const taxed = h('input', { type: 'checkbox', 'data-d': 'taxed', checked: draft.taxed ? '' : null });
     const baseSel = h('select', { 'data-d': 'mimicFund', 'aria-label': 'Fondo al que imita' }, ...bases.map(f => h('option', { value: f.id }, f.name)));
     const ofKind = b ? b.providers.filter(p => p.kind === draft.kind) : [], provList = b ? (ofKind.length ? ofKind : b.providers) : []; // si el índice no tiene de este tipo, se muestran todos
-    const provSel = b ? h('select', { 'data-d': 'mimicProv', 'aria-label': 'Gestor' }, ...provList.map(p => h('option', { value: p.id }, `${p.name}${provList === b.providers ? (p.kind === 'etf' ? ' · ETF' : ' · fondo indexado') : ''} · TER ${comma(p.ter)} %`))) : null;
+    const provSel = b ? h('select', { 'data-d': 'mimicProv', 'aria-label': 'Gestor' }, ...provList.map(p => h('option', { value: p.id }, `${p.name}${provList === b.providers ? (p.kind === 'etf' ? ' · ETF' : ' · fondo') : ''} · TER ${comma(p.ter)} %`))) : null;
     if (b) { baseSel.value = b.id; if (provList.some(p => p.id === draft.mimic.prov)) provSel.value = draft.mimic.prov; else draft.mimic.prov = provSel.value; }
     return h('div', {},
       h('div', { class: 'field' }, h('label', {}, 'Nombre'), h('input', { type: 'text', maxlength: 40, placeholder: 'Fondo personalizado', value: draft.name, 'data-d': 'name' })),
-      h('div', { class: 'field' }, h('label', {}, 'Tipo'), segBtns([['index', 'Fondo indexado'], ['etf', 'ETF']], draft.kind, v => { draft.kind = v; if (!taxedTouched) draft.taxed = v === 'etf'; const bf = draft.mimic && customFunds.baseFunds().find(f => f.id === draft.mimic.fund); if (bf && bf.providers.some(p => p.kind === v)) draft.mimic.prov = finance.cheapest(bf, v).id; renderFundDlg(); })),
-      h('p', { class: 'note' }, 'En España, mover dinero entre fondos indexados no paga impuestos; vender un ETF sí.'),
+      h('div', { class: 'field' }, h('label', {}, 'Tipo'), segBtns([['index', 'Fondo'], ['etf', 'ETF']], draft.kind, v => { draft.kind = v; if (!taxedTouched) draft.taxed = v === 'etf'; const bf = draft.mimic && customFunds.baseFunds().find(f => f.id === draft.mimic.fund); if (bf && bf.providers.some(p => p.kind === v)) draft.mimic.prov = finance.cheapest(bf, v).id; renderFundDlg(); })),
+      h('p', { class: 'note' }, 'En España, mover dinero entre fondos no paga impuestos; vender un ETF sí.'),
       dSlider('Movimientos entre fondos al año', 'perYear', 0, 12, 1, FMT.perYear),
       dSlider('% del fondo que mueves de media cada vez', 'pct', 0, 100, 1, FMT.pct),
       h('label', { class: 'check' }, taxed, 'Se pagan impuestos en estos movimientos'),
@@ -931,7 +938,7 @@
         const v = parseFloat(el.value); if (!Number.isFinite(v)) return;
         const lim = customFunds.LIMITS[fv];
         draft.vals[fv] = Math.min(lim[1], Math.max(lim[0], fv === 'rate' ? rateStored(v, customFunds.effective(draft, rateOf)) : v)); // la rentabilidad se guarda siempre como subida del precio
-        $$(`[data-fv="${fv}"]`, body).forEach(o => { if (o !== el) o.value = fv === 'rate' ? el.value : el.type === 'range' ? round(draft.vals[fv], 3) : draft.vals[fv]; });
+        $$(`[data-fv="${fv}"]`, body).forEach(o => { if (o !== el) o.value = fv === 'rate' ? el.value : o.type === 'range' ? round(draft.vals[fv], 3) : draft.vals[fv]; });
         if (fv === 'yield' || fv === 'ter') { // la cifra de rentabilidad que se ve depende de ellos: se actualiza
           const e2 = customFunds.effective(draft, rateOf), shown = round(rateShown(e2.rate, e2), 3);
           $$('[data-fv="rate"]', body).forEach(o => { if (document.activeElement !== o) o.value = shown; });
