@@ -9,8 +9,8 @@
    (media de los dos productos; DNB Renewable Energy 1,55 y DNB Nuclear Energy 0,40 según MyInvestor). Revísalos en la ficha de cada producto (campo "gastos corrientes"/OCF). */
 window.App = window.App || {};
 window.App.tersData = {
-  "updated": "2026-11-15",
-  "ters": {
+  updated: "2026-11-15",
+  ters: {
     "vt-vanguard-index": 0.18,
     "vt-vanguard-allcap": 0.07,
     "vt-vanguard": 0.14,
@@ -71,6 +71,6 @@ window.App.tersData = {
     "clean-dnb": 0.975,
     "clean-wisdomtree": 0.45,
     "clean-invesco-vaneck": 0.575,
-    "clean-ishares-vaneck": 0.6
-  }
+    "clean-ishares-vaneck": 0.6,
+  },
 };

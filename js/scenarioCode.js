@@ -3,27 +3,72 @@
    La huella detecta códigos cortados o alterados; la longitud permite ignorar texto pegado después del código.
    Lo importado se trata como NO fiable: solo se aceptan claves conocidas, con su tipo y dentro de rangos razonables. */
 (function (App) {
-  'use strict';
+  "use strict";
   const { config, finance } = App;
-  const PREFIX = 'FI1', VERSION = 1, MAX_LEN = 200000;
-  const LIMITS = { // [mín, máx] de los campos numéricos
-    net: [0, 1e7], needs: [0, 1e7], leisure: [0, 1e7], invest: [0, 1e7], initial: [0, 1e9],
-    workYears: [1, 100], retireYears: [1, 100], inflation: [-10, 100], brokerFee: [0, 100], retNeeds: [0, 1e7], retLeisure: [0, 1e7],
+  const PREFIX = "FI1",
+    VERSION = 1,
+    MAX_LEN = 200000;
+  const LIMITS = {
+    // [mín, máx] de los campos numéricos
+    net: [0, 1e7],
+    needs: [0, 1e7],
+    leisure: [0, 1e7],
+    invest: [0, 1e7],
+    initial: [0, 1e9],
+    workYears: [1, 100],
+    retireYears: [1, 100],
+    inflation: [-10, 100],
+    brokerFee: [0, 100],
+    retNeeds: [0, 1e7],
+    retLeisure: [0, 1e7],
   };
-  const ENUMS = { period: ['month', 'year'], stratBase: ['avg', 'mine'], retBasis: ['net', 'gross'] };
+  const ENUMS = {
+    period: ["month", "year"],
+    stratBase: ["avg", "mine"],
+    retBasis: ["net", "gross"],
+  };
 
-  const hash = s => { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); } return (h >>> 0).toString(16).padStart(8, '0'); };
-  const toB64 = bytes => { let bin = ''; bytes.forEach(b => { bin += String.fromCharCode(b); }); return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); };
-  const fromB64 = s => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
-  const fail = msg => { throw new Error(msg); };
-  const isObj = x => x !== null && typeof x === 'object' && !Array.isArray(x);
+  const hash = (s) => {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
+      h = Math.imul(h, 0x01000193);
+    }
+    return (h >>> 0).toString(16).padStart(8, "0");
+  };
+  const toB64 = (bytes) => {
+    let bin = "";
+    bytes.forEach((b) => {
+      bin += String.fromCharCode(b);
+    });
+    return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  };
+  const fromB64 = (s) =>
+    Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/")), (c) =>
+      c.charCodeAt(0),
+    );
+  const fail = (msg) => {
+    throw new Error(msg);
+  };
+  const isObj = (x) => x !== null && typeof x === "object" && !Array.isArray(x);
 
   /** Convierte un supuesto {name, state} en un código de una sola línea. */
   function encode(sc) {
-    const used = sc.state.alloc || {}, state = { ...sc.state, customFunds: (sc.state.customFunds || []).filter(d => d.id in used), // solo viajan los fondos personalizados marcados, aunque estén al 0 %
-      fundCfg: Object.fromEntries(Object.entries(sc.state.fundCfg || {}).filter(([id]) => id in used)) }; // y la configuración de los fondos marcados
-    delete state.favs; delete state.onlyFav; // los favoritos son una preferencia de vista, no parte del supuesto
-    const data = toB64(new TextEncoder().encode(JSON.stringify({ v: VERSION, name: sc.name, state })));
+    const used = sc.state.alloc || {},
+      state = {
+        ...sc.state,
+        customFunds: (sc.state.customFunds || []).filter((d) => d.id in used), // solo viajan los fondos personalizados marcados, aunque estén al 0 %
+        fundCfg: Object.fromEntries(
+          Object.entries(sc.state.fundCfg || {}).filter(([id]) => id in used),
+        ),
+      }; // y la configuración de los fondos marcados
+    delete state.favs;
+    delete state.onlyFav; // los favoritos son una preferencia de vista, no parte del supuesto
+    const data = toB64(
+      new TextEncoder().encode(
+        JSON.stringify({ v: VERSION, name: sc.name, state }),
+      ),
+    );
     return `${PREFIX}:${hash(data)}:${data.length}:${data}`;
   }
 
@@ -31,14 +76,15 @@
   function cleanFundCfg(src) {
     const out = {};
     if (!isObj(src)) return out;
-    for (const f of config.FUNDS.filter(x => !x.custom)) {
+    for (const f of config.FUNDS.filter((x) => !x.custom)) {
       const c = src[f.id];
       if (!isObj(c)) continue;
       const o = {};
-      if (f.providers.some(p => p.kind === c.kind)) o.kind = c.kind;
-      if (Number.isFinite(c.perYear)) o.perYear = Math.round(Math.min(12, Math.max(0, c.perYear)));
+      if (f.providers.some((p) => p.kind === c.kind)) o.kind = c.kind;
+      if (Number.isFinite(c.perYear))
+        o.perYear = Math.round(Math.min(12, Math.max(0, c.perYear)));
       if (Number.isFinite(c.pct)) o.pct = Math.min(100, Math.max(0, c.pct));
-      if (typeof c.taxed === 'boolean') o.taxed = c.taxed;
+      if (typeof c.taxed === "boolean") o.taxed = c.taxed;
       if (Object.keys(o).length) out[f.id] = o;
     }
     return out;
@@ -46,51 +92,100 @@
 
   /** Valida y limpia un estado importado: parte de los valores por defecto y solo acepta lo que reconoce. */
   function cleanState(src) {
-    const D = config.DEFAULT_STATE, out = structuredClone(D);
-    if (!isObj(src)) fail('El código no contiene datos de un supuesto.');
+    const D = config.DEFAULT_STATE,
+      out = structuredClone(D);
+    if (!isObj(src)) fail("El código no contiene datos de un supuesto.");
     for (const k of Object.keys(D)) {
-      const v = src[k], d = D[k];
+      const v = src[k],
+        d = D[k];
       if (k in ENUMS) out[k] = ENUMS[k].includes(v) ? v : d;
-      else if (k === 'histFrom' || k === 'histTo') out[k] = Number.isInteger(v) && v >= 1900 && v <= 2100 ? v : null;
-      else if (k === 'touched') out[k] = { needs: !!(isObj(v) && v.needs), leisure: !!(isObj(v) && v.leisure) };
-      else if (k === 'favs') out.favs = Array.isArray(v) ? [...new Set(v.filter(x => typeof x === 'string' && x.length <= 40))].slice(0, 100) : [];
-      else if (k === 'fundCfg') out.fundCfg = cleanFundCfg(src.fundCfg);
-      else if (k === 'retGross') out[k] = Number.isFinite(v) && v >= 0 ? Math.min(1e7, v) : null;
-      else if (k === 'customFunds') out.customFunds = App.customFunds.clean(src.customFunds); // fondos personalizados
-      else if (k === 'tax') out.tax = App.taxes.clean(src.tax); // país o tramos personalizados (se validan en taxes.js)
-      else if (k === 'alloc' || k === 'prov') continue; // se tratan después
-      else if (typeof d === 'boolean') out[k] = typeof v === 'boolean' ? v : d;
-      else if (typeof d === 'number') { const [lo, hi] = LIMITS[k] || [-1e9, 1e9]; out[k] = Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d; }
+      else if (k === "histFrom" || k === "histTo")
+        out[k] = Number.isInteger(v) && v >= 1900 && v <= 2100 ? v : null;
+      else if (k === "touched")
+        out[k] = {
+          needs: !!(isObj(v) && v.needs),
+          leisure: !!(isObj(v) && v.leisure),
+        };
+      else if (k === "favs")
+        out.favs = Array.isArray(v)
+          ? [
+              ...new Set(
+                v.filter((x) => typeof x === "string" && x.length <= 40),
+              ),
+            ].slice(0, 100)
+          : [];
+      else if (k === "fundCfg") out.fundCfg = cleanFundCfg(src.fundCfg);
+      else if (k === "retGross")
+        out[k] = Number.isFinite(v) && v >= 0 ? Math.min(1e7, v) : null;
+      else if (k === "customFunds")
+        out.customFunds = App.customFunds.clean(src.customFunds); // fondos personalizados
+      else if (k === "tax")
+        out.tax = App.taxes.clean(src.tax); // país o tramos personalizados (se validan en taxes.js)
+      else if (k === "alloc" || k === "prov")
+        continue; // se tratan después
+      else if (typeof d === "boolean") out[k] = typeof v === "boolean" ? v : d;
+      else if (typeof d === "number") {
+        const [lo, hi] = LIMITS[k] || [-1e9, 1e9];
+        out[k] = Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d;
+      }
     }
     // Reparto: solo fondos que existen, con pesos entre 0 y 100; si no queda ninguno, el reparto por defecto.
     const alloc = {};
-    const funds = [...config.FUNDS.filter(f => !f.custom), ...out.customFunds.map(d => App.customFunds.build(d))]; // los del catálogo y los personalizados del propio supuesto
-    if (isObj(src.alloc)) funds.forEach(f => { const w = src.alloc[f.id]; if (Number.isFinite(w)) alloc[f.id] = Math.min(100, Math.max(0, w)); });
+    const funds = [
+      ...config.FUNDS.filter((f) => !f.custom),
+      ...out.customFunds.map((d) => App.customFunds.build(d)),
+    ]; // los del catálogo y los personalizados del propio supuesto
+    if (isObj(src.alloc))
+      funds.forEach((f) => {
+        const w = src.alloc[f.id];
+        if (Number.isFinite(w)) alloc[f.id] = Math.min(100, Math.max(0, w));
+      });
     out.alloc = Object.keys(alloc).length ? alloc : structuredClone(D.alloc);
     // Gestor de cada fondo: solo uno de los gestores reales de ese fondo.
     out.prov = {};
-    if (isObj(src.prov)) funds.forEach(f => { const p = src.prov[f.id]; if (typeof p === 'string' && f.providers.some(x => x.id === p)) out.prov[f.id] = p; });
+    if (isObj(src.prov))
+      funds.forEach((f) => {
+        const p = src.prov[f.id];
+        if (typeof p === "string" && f.providers.some((x) => x.id === p))
+          out.prov[f.id] = p;
+      });
     return finance.normalize(out);
   }
 
   /** Lee un código (aunque venga con espacios, saltos de línea o texto alrededor) y devuelve {name, state}. Lanza Error con un mensaje en español. */
   function decode(text) {
-    const t = String(text ?? '').replace(/\s+/g, ''), i = t.indexOf(PREFIX + ':');
-    if (i < 0) fail('No encuentro ningún código de supuesto en lo que has pegado.');
+    const t = String(text ?? "").replace(/\s+/g, ""),
+      i = t.indexOf(PREFIX + ":");
+    if (i < 0)
+      fail("No encuentro ningún código de supuesto en lo que has pegado.");
     const head = /^FI1:([0-9a-f]{8}):(\d{1,6}):/.exec(t.slice(i));
-    if (!head) fail('El código no tiene el formato correcto.');
+    if (!head) fail("El código no tiene el formato correcto.");
     const len = Number(head[2]);
-    if (len > MAX_LEN) fail('El código es demasiado grande.');
-    const start = i + head[0].length, data = t.slice(start, start + len);
-    if (data.length < len) fail('El código está incompleto (¿se cortó al copiarlo?).');
-    if (!/^[A-Za-z0-9_-]+$/.test(data) || hash(data) !== head[1]) fail('El código está dañado o se ha modificado.');
+    if (len > MAX_LEN) fail("El código es demasiado grande.");
+    const start = i + head[0].length,
+      data = t.slice(start, start + len);
+    if (data.length < len)
+      fail("El código está incompleto (¿se cortó al copiarlo?).");
+    if (!/^[A-Za-z0-9_-]+$/.test(data) || hash(data) !== head[1])
+      fail("El código está dañado o se ha modificado.");
     let raw;
-    try { raw = JSON.parse(new TextDecoder().decode(fromB64(data))); } catch { fail('No se puede leer el contenido del código.'); }
-    if (!isObj(raw) || !Number.isInteger(raw.v)) fail('El código no contiene un supuesto válido.');
-    if (raw.v > VERSION) fail('Este código viene de una versión más nueva de la web; actualízala para importarlo.');
-    const name = typeof raw.name === 'string' ? raw.name.replace(/\s+/g, ' ').trim().slice(0, 40) : '';
-    return { name: name || 'Supuesto importado', state: cleanState(raw.state) };
+    try {
+      raw = JSON.parse(new TextDecoder().decode(fromB64(data)));
+    } catch {
+      fail("No se puede leer el contenido del código.");
+    }
+    if (!isObj(raw) || !Number.isInteger(raw.v))
+      fail("El código no contiene un supuesto válido.");
+    if (raw.v > VERSION)
+      fail(
+        "Este código viene de una versión más nueva de la web; actualízala para importarlo.",
+      );
+    const name =
+      typeof raw.name === "string"
+        ? raw.name.replace(/\s+/g, " ").trim().slice(0, 40)
+        : "";
+    return { name: name || "Supuesto importado", state: cleanState(raw.state) };
   }
 
   App.scenarioCode = { encode, decode, clean: cleanState }; // clean: también se usa al abrir la web y al cargar un supuesto guardado
-})(window.App = window.App || {});
+})((window.App = window.App || {}));
