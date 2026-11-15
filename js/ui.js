@@ -2181,12 +2181,16 @@
         "data-fw": d.id,
       }),
       h("span", { class: "suf" }, "%"),
-      fundPanel({ id: d.id }),
+      fundPanel({ id: d.id, name: d.name }),
     );
   }
 
   /** Panel desplegable de cualquier fondo: tipo (ETF o Fondo), movimientos al año, % que se mueve e impuestos de esos movimientos. */
   function fundPanel(f) {
+    const name =
+      f.name ||
+      config.FUNDS.find((x) => x.id === f.id)?.name ||
+      "Fondo personalizado";
     const slider = (label, key, max) =>
       h(
         "label",
@@ -2204,6 +2208,7 @@
     return h(
       "div",
       { class: "cpanel", hidden: "" },
+      h("div", { class: "panel-fullname" }, name),
       h(
         "label",
         {
