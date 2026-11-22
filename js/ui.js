@@ -112,6 +112,14 @@
     );
   };
   const sumAlloc = () => Object.values(state.alloc).reduce((a, b) => a + b, 0);
+  const totalMoveHint = (n) =>
+    n <= 0
+      ? ""
+      : n === 1
+        ? "Estimación: se realiza al jubilarse."
+        : n === 2
+          ? "Estimación: a mitad de la etapa laboral y al jubilarse."
+          : "Estimación: repartidos de forma uniforme hasta la jubilación (el último al jubilarse).";
 
   function h(tag, attrs = {}, ...kids) {
     const e = document.createElement(tag);
@@ -511,17 +519,28 @@
       const c = e.target.dataset.fcheck,
         w = e.target.dataset.fw,
         p = e.target.dataset.fprov,
+        cm = e.target.dataset.cmovemode,
         cy = e.target.dataset.cperyear,
         cp = e.target.dataset.cpct,
         ct = e.target.dataset.ctaxed,
         ck = e.target.dataset.ckind;
-      const fid = ck || ct || cy || cp;
+      const fid = ck || cm || ct || cy || cp;
       if (fid) {
-        // panel de un fondo (del catálogo o personalizado): tipo, movimientos al año, % que se mueve e impuestos
+        // panel de un fondo (del catálogo o personalizado): tipo, modo de movimientos, cantidad, % e impuestos
         const f = config.FUNDS.find((x) => x.id === fid);
         if (!f) return;
         if (ck) {
           changeKind(f, e.target.checked ? "etf" : "index");
+          refresh();
+          return;
+        }
+        if (cm) {
+          setOpts(f, { moveMode: e.target.checked ? "total" : "year" });
+          if (!optsOf(f).taxed) {
+            updateFundPanel(e.target.closest(".fund"), f, false);
+            scheduleSave();
+            return;
+          }
           refresh();
           return;
         }
@@ -531,7 +550,12 @@
           return;
         }
         const v = parseFloat(e.target.value) || 0;
-        setOpts(f, cy ? { perYear: Math.round(v) } : { pct: v });
+        if (cy) {
+          const isTotal = optsOf(f).moveMode === "total";
+          setOpts(f, isTotal ? { totalMoves: Math.round(v) } : { perYear: Math.round(v) });
+        } else {
+          setOpts(f, { pct: v });
+        }
         if (!optsOf(f).taxed) {
           updateFundPanel(e.target.closest(".fund"), f, false);
           scheduleSave();
@@ -2362,7 +2386,7 @@
     );
   }
 
-  /** Panel desplegable de cualquier fondo: tipo (ETF o Fondo), dividendos, movimientos al año, % que se mueve e impuestos. */
+  /** Panel desplegable de cualquier fondo: tipo (ETF o Fondo), dividendos, modo de movimientos (al año o en total), cantidad, % e impuestos. */
   function fundPanel(f) {
     const name =
       f.name ||
@@ -2425,7 +2449,20 @@
       ),
       h("small", { class: "chint khint" }),
       h("div", { class: "cdiv-row" }, h("span", {}, "Dividendos"), divBox),
+      h(
+        "label",
+        {
+          class: "switch kswitch",
+          title:
+            "Elige entre indicar movimientos al año o movimientos en total durante todo el plan",
+        },
+        h("span", {}, "Al año"),
+        h("input", { type: "checkbox", "data-cmovemode": f.id }),
+        h("i"),
+        h("span", {}, "En total"),
+      ),
       slider("Movimientos al año", "cperyear", 12),
+      h("small", { class: "chint mhint", hidden: "" }),
       slider("% del fondo que mueves cada vez", "cpct", 100),
       h(
         "label",
@@ -2461,7 +2498,9 @@
       const d = state.customFunds.find((x) => x.id === f.id) || {};
       return {
         kind: d.kind === "etf" ? "etf" : "index",
+        moveMode: d.moveMode === "total" ? "total" : "year",
         perYear: d.perYear ?? 0,
+        totalMoves: d.totalMoves ?? 0,
         pct: d.pct ?? 0,
         taxed: !!d.taxed,
       };
@@ -2470,7 +2509,9 @@
       kind = finance.kindOf(state, f);
     return {
       kind,
+      moveMode: c.moveMode === "total" ? "total" : "year",
       perYear: c.perYear ?? 0,
+      totalMoves: c.totalMoves ?? 0,
       pct: c.pct ?? 10,
       taxed: c.taxed ?? kind === "etf",
     };
@@ -2530,15 +2571,36 @@
       const dv = $(".cdiv-val", row);
       if (dv) setText(dv, `${comma(f.yield, 2)} %`);
     }
-    [
-      ["cperyear", o.perYear, (v) => `${v} al año`],
-      ["cpct", o.pct, (v) => `${comma(v, 1)} %`],
-    ].forEach(([k, v, fmt]) => {
-      const inp = $(`[data-${k}]`, row);
-      if (document.activeElement !== inp && Number(inp.value) !== v)
-        inp.value = v;
-      setText($(`[data-out="${k}"]`, row), fmt(v));
-    });
+    const isTotal = o.moveMode === "total",
+      mCount = isTotal ? o.totalMoves : o.perYear;
+    const cm = $("[data-cmovemode]", row);
+    if (cm && cm.checked !== isTotal) cm.checked = isTotal;
+    const mInp = $("[data-cperyear]", row);
+    if (mInp) {
+      const mMax = isTotal ? 20 : 12;
+      if (Number(mInp.max) !== mMax) mInp.max = mMax;
+      if (document.activeElement !== mInp && Number(mInp.value) !== mCount)
+        mInp.value = mCount;
+      const mLab = mInp.closest(".cslide")?.querySelector("span");
+      if (mLab)
+        setText(mLab, isTotal ? "Movimientos en total" : "Movimientos al año");
+      setText(
+        $('[data-out="cperyear"]', row),
+        isTotal ? `${mCount} en total` : `${mCount} al año`,
+      );
+    }
+    const mh = $(".mhint", row);
+    if (mh) {
+      const hintTxt = isTotal ? totalMoveHint(o.totalMoves) : "";
+      mh.hidden = !hintTxt;
+      setText(mh, hintTxt);
+    }
+    const pInp = $("[data-cpct]", row);
+    if (pInp) {
+      if (document.activeElement !== pInp && Number(pInp.value) !== o.pct)
+        pInp.value = o.pct;
+      setText($('[data-out="cpct"]', row), `${comma(o.pct, 1)} %`);
+    }
     const ck = $("[data-ckind]", row);
     if (ck.checked !== (o.kind === "etf")) ck.checked = o.kind === "etf";
     ck.disabled = !both;
@@ -2555,8 +2617,8 @@
     $(".tnote", row).hidden = o.taxed; // sin impuestos los movimientos no cambian el resultado
     setText(
       $(".cmoves", row),
-      o.perYear > 0 && o.pct > 0
-        ? `${o.perYear} mov./año · mueve el ${comma(o.pct, 1)} % · ${o.taxed ? "con impuestos" : "sin impuestos"}`
+      mCount > 0 && o.pct > 0
+        ? `${mCount} ${isTotal ? "mov. en total" : "mov./año"} · mueve el ${comma(o.pct, 1)} % · ${o.taxed ? "con impuestos" : "sin impuestos"}`
         : f.custom
           ? "Sin movimientos"
           : "",
@@ -2585,6 +2647,8 @@
     draft = cur
       ? structuredClone(cur)
       : customFunds.blank(new Set(state.customFunds.map((x) => x.id)));
+    if (draft.moveMode !== "total") draft.moveMode = "year";
+    if (!Number.isFinite(draft.totalMoves)) draft.totalMoves = 1;
     taxedTouched = !!cur;
     draftStep = 1;
     rateBasis = {
@@ -2639,12 +2703,14 @@
     );
   const FMT = {
     perYear: (v) => (v === 0 ? "ninguno" : `${v} al año`),
+    totalMoves: (v) => (v === 0 ? "ninguno" : `${v} en total`),
     pct: (v) => `${comma(v, 1)} %`,
   };
 
   function fundStepOne() {
     const bases = customFunds.baseFunds(),
       b = draft.mimic ? bases.find((f) => f.id === draft.mimic.fund) : null;
+    const isTotal = draft.moveMode === "total";
     const taxed = h("input", {
       type: "checkbox",
       "data-d": "taxed",
@@ -2676,6 +2742,7 @@
         provSel.value = draft.mimic.prov;
       else draft.mimic.prov = provSel.value;
     }
+    const hintTxt = isTotal ? totalMoveHint(draft.totalMoves) : "";
     return h(
       "div",
       {},
@@ -2718,14 +2785,54 @@
         { class: "note" },
         "En España, mover dinero entre fondos no paga impuestos; vender un ETF sí.",
       ),
-      dSlider(
-        "Movimientos entre fondos al año",
-        "perYear",
-        0,
-        12,
-        1,
-        FMT.perYear,
+      h(
+        "div",
+        { class: "field" },
+        h(
+          "label",
+          {
+            class: "switch kswitch",
+            title:
+              "Elige entre indicar movimientos al año o movimientos en total durante todo el plan",
+          },
+          h("span", {}, "Al año"),
+          h("input", {
+            type: "checkbox",
+            "data-d": "moveMode",
+            checked: isTotal ? "" : null,
+          }),
+          h("i"),
+          h("span", {}, "En total"),
+        ),
       ),
+      isTotal
+        ? dSlider(
+            "Movimientos entre fondos en total",
+            "totalMoves",
+            0,
+            20,
+            1,
+            FMT.totalMoves,
+          )
+        : dSlider(
+            "Movimientos entre fondos al año",
+            "perYear",
+            0,
+            12,
+            1,
+            FMT.perYear,
+          ),
+      isTotal
+        ? h(
+            "p",
+            {
+              class: "note",
+              "data-dhint": "totalMoves",
+              hidden: hintTxt ? null : "",
+            },
+            hintTxt,
+          )
+        : null,
       dSlider(
         "% del fondo que mueves de media cada vez",
         "pct",
@@ -3022,9 +3129,20 @@
         dk = el.dataset.d,
         fv = el.dataset.fv;
       if (dk === "name") draft.name = el.value;
-      else if (dk === "perYear" || dk === "pct") {
+      else if (dk === "moveMode") {
+        draft.moveMode = el.checked ? "total" : "year";
+        renderFundDlg();
+      } else if (dk === "perYear" || dk === "totalMoves" || dk === "pct") {
         draft[dk] = parseFloat(el.value) || 0;
         $(`[data-dout="${dk}"]`, body).textContent = FMT[dk](draft[dk]);
+        if (dk === "totalMoves") {
+          const hEl = $('[data-dhint="totalMoves"]', body);
+          if (hEl) {
+            const txt = totalMoveHint(draft.totalMoves);
+            hEl.hidden = !txt;
+            hEl.textContent = txt;
+          }
+        }
       } else if (dk === "taxed") {
         draft.taxed = el.checked;
         taxedTouched = true;

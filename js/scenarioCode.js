@@ -81,8 +81,12 @@
       if (!isObj(c)) continue;
       const o = {};
       if (f.providers.some((p) => p.kind === c.kind)) o.kind = c.kind;
+      if (c.moveMode === "year" || c.moveMode === "total")
+        o.moveMode = c.moveMode;
       if (Number.isFinite(c.perYear))
         o.perYear = Math.round(Math.min(12, Math.max(0, c.perYear)));
+      if (Number.isFinite(c.totalMoves))
+        o.totalMoves = Math.round(Math.min(20, Math.max(0, c.totalMoves)));
       if (Number.isFinite(c.pct)) o.pct = Math.min(100, Math.max(0, c.pct));
       if (typeof c.taxed === "boolean") o.taxed = c.taxed;
       if (Object.keys(o).length) out[f.id] = o;

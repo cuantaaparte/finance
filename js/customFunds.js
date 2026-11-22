@@ -1,6 +1,7 @@
 /* Fondos personalizados (sin DOM): definición, validación de lo importado y conversión a fondos del catálogo.
    Definición (se guarda en state.customFunds):
-     { id, name, kind: 'index'|'etf', perYear: movimientos al año, pct: % del fondo que se mueve cada vez, taxed: ¿tributan esos movimientos?,
+     { id, name, kind: 'index'|'etf', moveMode: 'year'|'total', perYear: movimientos al año, totalMoves: movimientos en total,
+       pct: % del fondo que se mueve cada vez, taxed: ¿tributan esos movimientos?,
        mimic: null | { fund, prov }  → imita a un fondo del catálogo y a su gestor,
        vals: { rate, ter, vol, yield, corr } → fondo inventado: todos; imitado: solo lo que el usuario ha cambiado (lo demás se hereda) }
    Unidades: rate, ter, vol, yield en % anual; corr entre -1 y 1 (correlación con la renta variable global: cuanto más baja, más diversifica). */
@@ -43,7 +44,9 @@
       id: newId(used),
       name: "",
       kind: "index",
+      moveMode: "year",
       perYear: 2,
+      totalMoves: 1,
       pct: 10,
       taxed: false,
       mimic: null,
@@ -96,7 +99,13 @@
       yield: e.yield,
       fallback: e.rate / 100,
       mimic: d.mimic,
-      moves: { perYear: d.perYear, pct: d.pct, taxed: !!d.taxed },
+      moves: {
+        mode: d.moveMode === "total" ? "total" : "year",
+        perYear: d.perYear,
+        total: d.totalMoves ?? 0,
+        pct: d.pct,
+        taxed: !!d.taxed,
+      },
       providers: [
         { id: d.id, name: "Personalizado", ter: e.ter, kind: d.kind },
       ],
@@ -144,7 +153,9 @@
             .trim()
             .slice(0, 40) || "Fondo personalizado",
         kind,
+        moveMode: d.moveMode === "total" ? "total" : "year",
         perYear: Math.round(num(d.perYear, 0, 12, 0)),
+        totalMoves: Math.round(num(d.totalMoves, 0, 20, 0)),
         pct: num(d.pct, 0, 100, 0),
         taxed: typeof d.taxed === "boolean" ? d.taxed : kind === "etf",
         mimic,

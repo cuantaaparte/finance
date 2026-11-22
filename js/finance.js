@@ -38,7 +38,9 @@
     const c = s.fundCfg?.[f.id];
     return c
       ? {
+          mode: c.moveMode === "total" ? "total" : "year",
           perYear: c.perYear ?? 0,
+          total: c.totalMoves ?? 0,
           pct: c.pct ?? 10,
           taxed: c.taxed ?? kindOf(s, f) === "etf",
         }
@@ -101,6 +103,21 @@
     return { drag: s * g * tau, realize: s * g };
   }
 
+  /** Reparte los movimientos totales de cada fondo en meses concretos (0 .. workM-1), cayendo siempre el último al jubilarse. */
+  function buildMoveSchedule(events, workM) {
+    if (!events?.length || workM <= 0) return null;
+    const byMonth = Object.create(null);
+    for (const ev of events) {
+      const n = Math.max(0, Math.round(ev.n));
+      if (!n || !(ev.frac > 0)) continue;
+      for (let j = 1; j <= n; j++) {
+        const m = clamp(Math.round((j * workM) / n) - 1, 0, workM - 1);
+        byMonth[m] = Math.min(1, (byMonth[m] || 0) + ev.frac);
+      }
+    }
+    return Object.keys(byMonth).length ? byMonth : null;
+  }
+
   /** Rentabilidad nominal neta de comisiones (fondo + bróker), dividendos netos de impuestos y riesgo ponderado. */
   function portfolio(s, rateOf) {
     let rows = Object.entries(s.alloc)
@@ -115,22 +132,28 @@
       div = 0,
       vol = 0,
       realize = 0;
+    const events = [];
     rows.forEach(([f, w]) => {
       const k = sum > 0 ? w / sum : 1 / rows.length,
         r = rateOf(f).rate - providerOf(s, f).ter / 100;
       let drag = 0;
       const mvc = movesOf(s, f);
-      if (mvc?.taxed && mvc.perYear > 0 && mvc.pct > 0) {
-        // fondos que pagan impuestos al moverse
-        const mv = moveDrag(r, (mvc.perYear * mvc.pct) / 100, tau);
-        drag = mv.drag;
-        realize += k * mv.realize * (1 - tau);
+      if (mvc?.taxed && mvc.pct > 0) {
+        if (mvc.mode === "total") {
+          if (mvc.total > 0)
+            events.push({ n: mvc.total, frac: k * (mvc.pct / 100) });
+        } else if (mvc.perYear > 0) {
+          // fondos que pagan impuestos al moverse
+          const mv = moveDrag(r, (mvc.perYear * mvc.pct) / 100, tau);
+          drag = mv.drag;
+          realize += k * mv.realize * (1 - tau);
+        }
       }
       price += k * (r - drag);
       div += k * (f.yield / 100) * (1 - dTax);
       vol += k * f.vol; // aproximación: media ponderada (ignora correlaciones)
     });
-    return { price, total: price + div, vol, realize };
+    return { price, total: price + div, vol, realize, events };
   }
 
   function simulate(s, p) {
@@ -141,8 +164,10 @@
       mT = m(p.total),
       dM = Math.max(0, (p.total - p.price) / 12) + (p.realize || 0) / 12; // dM: dividendos (ya con impuestos) que se reinvierten
     const T = App.taxes,
-      gross = T.grossFn(T.resolve(s.tax)),
+      def = T.resolve(s.tax),
+      gross = T.grossFn(def),
       net = s.retNeeds + s.retLeisure;
+    const evAt = buildMoveSchedule(p.events, s.workYears * 12);
     const grossAt = (q) => (net > 0 ? gross(net * 12, q) / 12 : 0); // bruto mensual que hay que sacar para cobrar `net` tras impuestos
     const gainShare = (t, b) => (t > 0 ? clamp(1 - b / t, 0, 1) : 0); // parte del capital que es ganancia (coste medio)
     const years = s.workYears + s.retireYears;
@@ -176,6 +201,15 @@
           pr = pr * (1 + mP) + s.invest;
           t = t * (1 + mT) + s.invest;
           i += s.invest;
+          const frac = evAt?.[y * 12 + k];
+          if (frac > 0 && t > 0) {
+            const gain = Math.max(0, t - basis) * frac;
+            const tax = gain > 0 ? T.calc(def, gain).tax : 0;
+            const ratio = Math.max(0, (t - tax) / t);
+            pr *= ratio;
+            basis = basis * (1 - frac) + Math.max(0, t * frac - tax);
+            t = Math.max(0, t - tax);
+          }
         } else {
           const tb = t * (1 + mT);
           basis = basis / infM + t * dM;
@@ -263,7 +297,7 @@
    * mensual debe ser la geométrica + varianza/2; si no, el remuestreo rendiría ≈σ²/2 menos de lo previsto), y sortea la inflación
    * de cada año con su variación histórica real. Devuelve la probabilidad de agotar el dinero y lo pronto que ocurre.
    */
-  function monteCarlo(s, exp, market, infl, volEst, divM, runs = 300) {
+  function monteCarlo(s, exp, market, infl, volEst, divM, runs = 300, events = null) {
     const rand = rng(20261107),
       hist = market?.returns,
       L = hist?.length || 0,
@@ -280,8 +314,10 @@
     const workM = s.workYears * 12,
       totalM = workM + s.retireYears * 12;
     const T = App.taxes,
-      gross = T.grossFn(T.resolve(s.tax)),
+      def = T.resolve(s.tax),
+      gross = T.grossFn(def),
       net = s.retNeeds + s.retLeisure;
+    const evAt = buildMoveSchedule(events, workM);
     let fails = 0,
       early = 0;
     for (let k = 0; k < runs; k++) {
@@ -316,6 +352,13 @@
         if (m < workM) {
           basis = basis * invInf + s.invest + w * divM;
           w = w * (1 + g) + s.invest;
+          const frac = evAt?.[m];
+          if (frac > 0 && w > 0) {
+            const gain = Math.max(0, w - basis) * frac;
+            const tax = gain > 0 ? T.calc(def, gain).tax : 0;
+            basis = basis * (1 - frac) + Math.max(0, w * frac - tax);
+            w = Math.max(0, w - tax);
+          }
         } else {
           if ((m - workM) % 12 === 0)
             spend =
@@ -361,6 +404,8 @@
       infl,
       volEst,
       (p.total - p.price) / 12 + (p.realize || 0) / 12,
+      300,
+      p.events,
     );
     const score = Math.round(mc.score);
     const [, level, color] = LEVELS.find((l) => score < l[0]);
