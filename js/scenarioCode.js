@@ -61,13 +61,18 @@
     let adv = null;
     if (src.advancedMode && isObj(src.advanced)) {
       const compactList = (list) =>
-        (Array.isArray(list) ? list : []).map((ph) => {
-          const phAlloc = ph.alloc || {};
+        (Array.isArray(list) ? list : []).map((item) => {
+          if (item?.itemType === "op") {
+            if (item.fromFund) usedIds.add(item.fromFund);
+            if (item.toFund) usedIds.add(item.toFund);
+            return { ...item };
+          }
+          const phAlloc = item.alloc || {};
           Object.keys(phAlloc).forEach((id) => usedIds.add(id));
           return {
-            ...ph,
+            ...item,
             fundCfg: Object.fromEntries(
-              Object.entries(ph.fundCfg || {}).filter(([id]) => id in phAlloc),
+              Object.entries(item.fundCfg || {}).filter(([id]) => id in phAlloc),
             ),
           };
         });
@@ -81,7 +86,7 @@
 
     const state = {
       ...src,
-      customFunds: (src.customFunds || []).filter((d) => usedIds.has(d.id)), // viajan los fondos personalizados usados en la cartera o en algún tramo
+      customFunds: (src.customFunds || []).filter((d) => usedIds.has(d.id)), // viajan los fondos personalizados usados en la cartera, en algún tramo o en alguna operación
       fundCfg: Object.fromEntries(
         Object.entries(src.fundCfg || {}).filter(([id]) => id in rootAlloc),
       ),
@@ -179,7 +184,7 @@
         if (typeof p === "string" && f.providers.some((x) => x.id === p))
           out.prov[f.id] = p;
       });
-    // Modo Avanzado: valida cada tramo con los fondos e impuestos reconocidos.
+    // Modo Avanzado: valida cada tramo y operación con los fondos e impuestos reconocidos.
     if (App.advanced) {
       out.advanced = App.advanced.clean(src.advanced, out, funds);
       if (out.advancedMode) {

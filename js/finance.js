@@ -1,9 +1,19 @@
-/* Lógica financiera pura (sin DOM): normalización, cartera, simulación (estándar y multi-tramo por fondos independientes en Modo Avanzado) y estrategias.
+/* Lógica financiera pura (sin DOM): normalización, cartera, simulación (estándar y multi-tramo con fondos independientes, efectivo y operaciones) y estrategias.
    Todo se calcula en euros de HOY: las aportaciones y retiradas suben con la inflación y el rendimiento es real. */
 (function (App) {
   "use strict";
   const { config } = App;
   const clamp = (x, a, b) => Math.min(Math.max(x, a), b);
+  const eurFmt = new Intl.NumberFormat("es-ES", {
+    style: "currency",
+    currency: "EUR",
+    maximumFractionDigits: 0,
+  });
+  const isOpItem = (x) => x?.itemType === "op";
+  const onlyPhases = (list) =>
+    Array.isArray(list) ? list.filter((x) => !isOpItem(x)) : [];
+  const kindLabel = (k) => (k === "etf" ? "ETF" : "Fondo");
+
   /** Gestor más barato del fondo; con `kind` ('etf' | 'index'), el más barato de ese tipo (si no hay de ese tipo, de cualquiera). */
   const cheapest = (f, kind) => {
     const l = kind ? f.providers.filter((p) => p.kind === kind) : f.providers;
@@ -84,15 +94,14 @@
     const free = s.net - s.needs - s.leisure;
     s.invest = s.investAuto ? free : clamp(s.investWant ?? s.invest, 0, free);
     if (s.retLinked) {
+      const invPhases = onlyPhases(s.advanced?.invest);
       if (
         s.advancedMode &&
         s.advanced?.activeGroup === "spend" &&
-        s.advanced.invest?.length
+        invPhases.length
       ) {
         // En Modo Avanzado, "Mismos gastos que ahora" toma los gastos del último tramo de inversión
-        const lastInv = normInvestValues(
-          s.advanced.invest[s.advanced.invest.length - 1],
-        );
+        const lastInv = normInvestValues(invPhases[invPhases.length - 1]);
         s.retNeeds = lastInv.needs;
         s.retLeisure = lastInv.leisure;
       } else {
@@ -244,22 +253,20 @@
     return { price, total: price + div, vol, realize, events };
   }
 
-  /** Cartera del estado actual. En Modo Avanzado calcula la cartera de cada tramo y guarda las tasas de cada fondo para la simulación por huchas. */
+  /** Cartera del estado actual. En Modo Avanzado prepara las listas ordenadas de tramos+operaciones y las rentabilidades de todos los fondos usados. */
   function portfolio(s, rateOf) {
-    if (
-      s.advancedMode &&
-      s.advanced?.invest?.length &&
-      s.advanced?.spend?.length
-    ) {
-      const baseTax = s.advanced.spend[0]?.tax || s.tax;
+    const invPhases = onlyPhases(s.advanced?.invest);
+    const spdPhases = onlyPhases(s.advanced?.spend);
+    if (s.advancedMode && invPhases.length && spdPhases.length) {
+      const baseTax = spdPhases[0]?.tax || s.tax;
       const rates = Object.create(null);
-      const recordRates = (ph) => {
-        for (const t of phaseTargets(ph)) {
-          if (!(t.fund.id in rates)) rates[t.fund.id] = rateOf(t.fund).rate;
-        }
+      const recordFund = (id) => {
+        if (!id || id in rates) return;
+        const f = config.FUNDS.find((x) => x.id === id);
+        if (f) rates[id] = rateOf(f).rate;
       };
       const evalPhase = (ph, tax) => {
-        recordRates(ph);
+        for (const t of phaseTargets(ph)) recordFund(t.fund.id);
         return evalPortfolio(
           {
             ...s,
@@ -272,15 +279,24 @@
           rateOf,
         );
       };
-      const invest = s.advanced.invest.map((phase) => ({
-        phase,
-        port: evalPhase(phase, baseTax),
-      }));
-      const spend = s.advanced.spend.map((phase) => ({
-        phase,
-        port: evalPhase(phase, phase.tax),
-      }));
-      const curGroup = s.advanced.activeGroup === "spend" ? spend : invest;
+      const wrapList = (list, isSpend) =>
+        list.map((item) => {
+          if (isOpItem(item)) {
+            recordFund(item.fromFund);
+            recordFund(item.toFund);
+            return { isOp: true, op: item };
+          }
+          return {
+            isOp: false,
+            phase: item,
+            port: evalPhase(item, isSpend ? item.tax : baseTax),
+          };
+        });
+      const invest = wrapList(s.advanced.invest, false);
+      const spend = wrapList(s.advanced.spend, true);
+      const curGroup = (s.advanced.activeGroup === "spend" ? spend : invest).filter(
+        (x) => !x.isOp,
+      );
       const cur =
         curGroup.find((x) => x.phase.id === s.advanced.activeId) || curGroup[0];
       return { ...cur.port, adv: { invest, spend, rates } };
@@ -288,12 +304,14 @@
     return evalPortfolio(s, rateOf);
   }
 
-  /** Reparte una retirada `amount` entre los fondos elegidos en el tramo de gasto (priorizando proveedor/tipo exacto, luego mismo fondo,
-   *  luego otros fondos seleccionados del tramo y, si todos los objetivos se agotan, el resto de fondos con saldo). */
-  function withdrawBuckets(buckets, targets, amount, dryRun) {
+  /** Retirada ESTRICTA: solo saca dinero de los fondos (y tipo Fondo/ETF) seleccionados en el tramo de gasto.
+   *  Si un fondo objetivo se agota, puede cubrirse con OTROS fondos también seleccionados en el mismo tramo,
+   *  pero NUNCA recurre a fondos que no estén seleccionados en ese tramo. */
+  function withdrawBucketsStrict(buckets, targets, amount, dryRun) {
     const n = buckets.length;
     const taken = new Float64Array(n);
-    if (!(amount > 1e-12) || !n) return { taken, totalTaken: 0 };
+    if (!(amount > 1e-12) || !n)
+      return { taken, totalTaken: 0, shortfall: Math.max(0, amount) };
     let totalTaken = 0;
 
     const takeIndices = (indices, need) => {
@@ -314,44 +332,38 @@
       return grab;
     };
 
-    const targetFundIds = new Set();
-    // Pasada 1: cada fondo objetivo en su proporción configurada
+    const allowedKeys = new Set();
+    // Pasada 1: cada fondo+tipo objetivo en su proporción configurada
     for (const t of targets) {
-      targetFundIds.add(t.fund.id);
+      allowedKeys.add(`${t.fund.id}|${t.kind}`);
       let need = amount * t.weight;
       const exact = [],
-        sameKind = [],
-        otherSameFund = [];
+        sameKind = [];
       for (let i = 0; i < n; i++) {
         const b = buckets[i];
-        if (b.fundId !== t.fund.id || b.val - taken[i] <= 1e-12) continue;
+        if (b.fundId !== t.fund.id || b.kind !== t.kind || b.val - taken[i] <= 1e-12)
+          continue;
         if (b.provId === t.prov.id) exact.push(i);
-        else if (b.kind === t.kind) sameKind.push(i);
-        else otherSameFund.push(i);
+        else sameKind.push(i);
       }
       need -= takeIndices(exact, need);
-      if (need > 1e-12) need -= takeIndices(sameKind, need);
-      if (need > 1e-12) takeIndices(otherSameFund, need);
+      if (need > 1e-12) takeIndices(sameKind, need);
     }
 
-    // Pasada 2: si algún fondo objetivo se agotó, cubre el resto con los otros fondos seleccionados en el tramo
-    let shortfall = amount - totalTaken;
+    // Pasada 2: si algún fondo objetivo se agotó, cubre el resto SOLO con los otros fondos seleccionados en este mismo tramo
+    let shortfall = Math.max(0, amount - totalTaken);
     if (shortfall > 1e-12) {
       const pool = [];
       for (let i = 0; i < n; i++) {
-        if (targetFundIds.has(buckets[i].fundId) && buckets[i].val - taken[i] > 1e-12)
+        const b = buckets[i];
+        if (
+          allowedKeys.has(`${b.fundId}|${b.kind}`) &&
+          b.val - taken[i] > 1e-12
+        ) {
           pool.push(i);
+        }
       }
-      shortfall -= takeIndices(pool, shortfall);
-    }
-
-    // Pasada 3: si todos los fondos seleccionados en el tramo están a 0 €, recurre al resto de fondos con capital
-    if (shortfall > 1e-12) {
-      const rest = [];
-      for (let i = 0; i < n; i++) {
-        if (buckets[i].val - taken[i] > 1e-12) rest.push(i);
-      }
-      takeIndices(rest, shortfall);
+      shortfall = Math.max(0, shortfall - takeIndices(pool, shortfall));
     }
 
     if (!dryRun) {
@@ -364,7 +376,7 @@
         b.basis = before > 0 ? b.basis * (b.val / before) : 0;
       }
     }
-    return { taken, totalTaken };
+    return { taken, totalTaken, shortfall };
   }
 
   /** Aplica impuestos sobre ganancias en los movimientos puntuales (`mode === 'total'`) programados para un mes concreto. */
@@ -378,7 +390,10 @@
       );
       const list = exact.length
         ? exact
-        : buckets.filter((b) => b.fundId === ev.fundId && b.val > 1e-9);
+        : buckets.filter(
+            (b) =>
+              b.fundId === ev.fundId && b.kind === ev.kind && b.val > 1e-9,
+          );
       for (const b of list) {
         const gain = Math.max(0, b.val - b.basis) * ev.frac;
         moves.push({ b, frac: ev.frac, gain });
@@ -397,15 +412,144 @@
     }
   }
 
-  /** Simulación secuencial multi-tramo con huchas independientes por fondo/gestor:
-   *  - Cada fondo invertido en un tramo sigue creciendo en los siguientes tramos con su propia rentabilidad, TER y dividendos.
-   *  - En los tramos de gasto, se retira prioritariamente de los fondos marcados en ese tramo mientras los demás siguen acumulando. */
+  /** Resuelve el proveedor de destino de una operación (comprar o mover). */
+  function opDestProvider(op) {
+    const f = config.FUNDS.find((x) => x.id === op.toFund);
+    if (!f) return null;
+    const k = op.toKind === "etf" ? "etf" : "index";
+    const byId = f.providers.find((p) => p.id === op.toProv && p.kind === k);
+    if (byId) return { fund: f, prov: byId };
+    return { fund: f, prov: cheapest(f, k) };
+  }
+
+  /** Ejecuta una operación puntual (vender, comprar o mover) sobre el estado { buckets, cash }.
+   *  Devuelve un mensaje de error si la operación es imposible o parcialmente imposible ("" si todo fue bien). */
+  function runOperation(op, ctx, taxDef, T) {
+    const fundName = (id) =>
+      config.FUNDS.find((x) => x.id === id)?.name || id || "fondo";
+    const amount = Math.max(0, Number(op.amount) || 0);
+    if (!(amount > 0)) return "La cantidad de la operación debe ser mayor que 0.";
+
+    if (op.op === "buy") {
+      const dest = opDestProvider(op);
+      if (!dest) return "Fondo de destino no encontrado.";
+      const availCash = Math.max(0, ctx.cash);
+      const req =
+        op.amountMode === "eur" ? amount : availCash * (clamp(amount, 0, 100) / 100);
+      let err = "";
+      if (availCash <= 1e-3) {
+        return `No tienes efectivo disponible para comprar ${dest.fund.name} (${kindLabel(dest.prov.kind)}).`;
+      }
+      if (op.amountMode === "eur" && availCash + 1 < req) {
+        err = `Efectivo insuficiente: tienes ${eurFmt.format(availCash)} y quieres comprar ${eurFmt.format(req)}.`;
+      }
+      const spendCash = Math.min(availCash, req);
+      if (spendCash > 1e-6) {
+        ctx.cash = Math.max(0, ctx.cash - spendCash);
+        const b = ctx.getBucket(dest.fund, dest.prov);
+        b.val += spendCash;
+        b.priceVal += spendCash;
+        b.basis += spendCash;
+      }
+      return err;
+    }
+
+    // Vender o Mover: requieren saldo en el fondo + tipo de origen
+    const fk = op.fromKind === "etf" ? "etf" : "index";
+    const match = ctx.buckets.filter(
+      (b) => b.fundId === op.fromFund && b.kind === fk && b.val > 1e-6,
+    );
+    const avail = match.reduce((a, b) => a + b.val, 0);
+    if (avail <= 1e-3) {
+      const otherKind = fk === "etf" ? "index" : "etf";
+      const hasOther = ctx.buckets.some(
+        (b) => b.fundId === op.fromFund && b.kind === otherKind && b.val > 1e-3,
+      );
+      const verb = op.op === "sell" ? "vender" : "mover";
+      return hasOther
+        ? `No tienes saldo en ${fundName(op.fromFund)} (${kindLabel(fk)}) para ${verb}; lo tienes como ${kindLabel(otherKind)}.`
+        : `No tienes saldo en ${fundName(op.fromFund)} (${kindLabel(fk)}) en este punto para ${verb}.`;
+    }
+
+    const req =
+      op.amountMode === "eur" ? amount : avail * (clamp(amount, 0, 100) / 100);
+    let err = "";
+    if (op.amountMode === "eur" && avail + 1 < req) {
+      err = `Saldo insuficiente en ${fundName(op.fromFund)} (${kindLabel(fk)}): tienes ${eurFmt.format(avail)} y quieres ${op.op === "sell" ? "vender" : "mover"} ${eurFmt.format(req)}.`;
+    }
+    const takeTotal = Math.min(avail, req);
+    const ratioTaken = avail > 0 ? takeTotal / avail : 0;
+
+    if (op.op === "sell") {
+      let soldVal = 0,
+        soldBasis = 0;
+      for (const b of match) {
+        const dv = b.val * ratioTaken;
+        const db = b.basis * ratioTaken;
+        const dp = b.priceVal * ratioTaken;
+        b.val = Math.max(0, b.val - dv);
+        b.basis = Math.max(0, b.basis - db);
+        b.priceVal = Math.max(0, b.priceVal - dp);
+        soldVal += dv;
+        soldBasis += db;
+      }
+      const gain = Math.max(0, soldVal - soldBasis);
+      const tax = op.taxed && gain > 0 ? T.calc(taxDef, gain).tax : 0;
+      ctx.cash += Math.max(0, soldVal - tax);
+      return err;
+    }
+
+    // Mover (traspasar)
+    const dest = opDestProvider(op);
+    if (!dest) return "Fondo de destino no encontrado.";
+    if (
+      op.fromFund === dest.fund.id &&
+      fk === dest.prov.kind &&
+      match.length === 1 &&
+      match[0].provId === dest.prov.id
+    ) {
+      return "El origen y el destino de la operación son exactamente el mismo fondo y gestor.";
+    }
+    let movedVal = 0,
+      movedBasis = 0,
+      movedPrice = 0;
+    for (const b of match) {
+      const dv = b.val * ratioTaken;
+      const db = b.basis * ratioTaken;
+      const dp = b.priceVal * ratioTaken;
+      b.val = Math.max(0, b.val - dv);
+      b.basis = Math.max(0, b.basis - db);
+      b.priceVal = Math.max(0, b.priceVal - dp);
+      movedVal += dv;
+      movedBasis += db;
+      movedPrice += dp;
+    }
+    const gain = Math.max(0, movedVal - movedBasis);
+    const destB = ctx.getBucket(dest.fund, dest.prov);
+    if (op.taxed) {
+      const tax = gain > 0 ? T.calc(taxDef, gain).tax : 0;
+      const netIn = Math.max(0, movedVal - tax);
+      const pRatio = movedVal > 0 ? netIn / movedVal : 1;
+      destB.val += netIn;
+      destB.priceVal += movedPrice * pRatio;
+      destB.basis += netIn; // tributó: su nuevo coste fiscal es el importe reinvertido
+    } else {
+      // Traspaso exento (Fondo → Fondo): conserva el coste fiscal original
+      destB.val += movedVal;
+      destB.priceVal += movedPrice;
+      destB.basis += movedBasis;
+    }
+    return err;
+  }
+
+  /** Simulación secuencial multi-tramo con huchas independientes, efectivo, operaciones y retirada estricta. */
   function simulateAdvanced(s, p) {
     const T = App.taxes;
-    const invList = p.adv.invest;
-    const spdList = p.adv.spend;
+    const invItems = p.adv.invest;
+    const spdItems = p.adv.spend;
     const rates = p.adv.rates || {};
-    const baseTaxDef = T.resolve(spdList[0]?.phase.tax || s.tax);
+    const firstSpendPhase = spdItems.find((x) => !x.isOp)?.phase;
+    const baseTaxDef = T.resolve(firstSpendPhase?.tax || s.tax);
 
     // Huchas independientes keyed por `${fundId}|${provId}`
     const buckets = [];
@@ -431,8 +575,35 @@
       return b;
     };
 
-    const sumVal = () => buckets.reduce((a, b) => a + b.val, 0);
-    const sumPrice = () => buckets.reduce((a, b) => a + b.priceVal, 0);
+    const ctx = { buckets, cash: 0, getBucket };
+    const sumFunds = () => buckets.reduce((a, b) => a + b.val, 0);
+    const sumVal = () => sumFunds() + ctx.cash;
+    const sumPrice = () => buckets.reduce((a, b) => a + b.priceVal, 0) + ctx.cash;
+
+    const snapshotNow = (yr) => {
+      // Agrupa por fundId|kind para el resumen del modal
+      const byKey = new Map();
+      for (const b of buckets) {
+        if (!(b.val > 0.5)) continue;
+        const k = `${b.fundId}|${b.kind}`;
+        const prev = byKey.get(k);
+        if (prev) prev.val += b.val;
+        else
+          byKey.set(k, {
+            fundId: b.fundId,
+            name: b.fund.name,
+            kind: b.kind,
+            provId: b.provId,
+            val: b.val,
+          });
+      }
+      return {
+        year: yr,
+        cash: ctx.cash,
+        total: sumVal(),
+        holdings: [...byKey.values()].sort((a, b) => b.val - a.val),
+      };
+    };
 
     const bucketParams = (b, ph, infl, brk, tau, dTax) => {
       const baseR = (rates[b.fundId] ?? b.fund.fallback) - b.ter / 100;
@@ -461,36 +632,61 @@
       };
     };
 
-    const init0 = Math.max(0, Number(invList[0]?.phase.initial) || 0);
-    if (init0 > 0 && invList[0]) {
-      for (const t of phaseTargets(invList[0].phase)) {
-        const b = getBucket(t.fund, t.prov);
-        const amt = init0 * t.weight;
-        b.val += amt;
-        b.priceVal += amt;
-        b.basis += amt;
-      }
-    }
+    const firstInvPhase = invItems.find((x) => !x.isOp)?.phase;
+    const init0 = Math.max(0, Number(firstInvPhase?.initial) || 0);
+    let initApplied = false;
 
     const invested = [init0],
       price = [init0],
       total = [init0],
+      cashSeries = [0],
       nominal = [init0],
       decline = [],
       nominalDecline = [],
-      transitions = [];
+      transitions = [],
+      opMarkers = [],
+      issues = Object.create(null),
+      opSnapshots = Object.create(null);
 
     let inv = init0,
       cumInfl = 1,
       y = 0,
       depleted = null,
+      unfundedYear = null,
       realProd = 1,
       realMonths = 0,
       lastInvNeeds = 0,
-      lastInvLeisure = 0;
+      lastInvLeisure = 0,
+      invPhaseCount = 0;
 
-    // 1) Fase de acumulación: encadena todos los tramos de «Invertir»
-    invList.forEach(({ phase: ph }, idx) => {
+    // 1) Fase de acumulación: recorre en orden tramos y operaciones de «Invertir»
+    for (const entry of invItems) {
+      if (entry.isOp) {
+        const op = entry.op;
+        opSnapshots[op.id] = snapshotNow(y);
+        const err = runOperation(op, ctx, baseTaxDef, T);
+        if (err) issues[op.id] = err;
+        opMarkers.push({
+          year: y,
+          id: op.id,
+          group: "invest",
+          op: op.op,
+          label: App.advanced?.opChartLabel
+            ? App.advanced.opChartLabel(op)
+            : op.op,
+          err,
+        });
+        // Refleja el impacto fiscal de la operación en el punto actual de la curva
+        const curTot = sumVal();
+        total[y] = curTot;
+        price[y] = sumPrice();
+        cashSeries[y] = ctx.cash;
+        nominal[y] = curTot * cumInfl;
+        continue;
+      }
+
+      const ph = entry.phase;
+      const idx = invPhaseCount++;
       const phYears = Math.max(1, Math.round(Number(ph.years) || 1));
       transitions.push({
         year: y,
@@ -498,6 +694,7 @@
         id: ph.id,
         label: ph.label || String(idx + 1),
       });
+
       const nv = normInvestValues(ph);
       lastInvNeeds = nv.needs;
       lastInvLeisure = nv.leisure;
@@ -507,8 +704,18 @@
         bucket: getBucket(t.fund, t.prov),
       }));
 
-      // Aportación puntual al inicio de tramos 2+
-      if (idx > 0 && Number(ph.initial) > 0) {
+      // Capital inicial en el primer tramo o aportación puntual al inicio de tramos 2+
+      if (!initApplied) {
+        initApplied = true;
+        if (init0 > 0) {
+          for (const t of targets) {
+            const amt = init0 * t.weight;
+            t.bucket.val += amt;
+            t.bucket.priceVal += amt;
+            t.bucket.basis += amt;
+          }
+        }
+      } else if (Number(ph.initial) > 0) {
         const extra = Number(ph.initial);
         inv += extra;
         for (const t of targets) {
@@ -531,8 +738,9 @@
 
       for (let py = 0; py < phYears; py++) {
         for (let k = 0; k < 12; k++) {
-          let wSum = 0,
-            wRet = 0;
+          let wSum = ctx.cash,
+            wRet = ctx.cash * (1 / infM - 1);
+          if (ctx.cash > 0) ctx.cash = ctx.cash / infM;
           for (let bi = 0; bi < buckets.length; bi++) {
             const b = buckets[bi],
               bp = bParams[bi];
@@ -565,12 +773,15 @@
         invested.push(inv);
         price.push(sumPrice());
         total.push(tot);
+        cashSeries.push(ctx.cash);
         nominal.push(tot * cumInfl);
         decline.push(false);
         nominalDecline.push(false);
         y++;
       }
-    });
+    }
+
+    opSnapshots["end:invest"] = snapshotNow(y);
 
     const work = y;
     const capital = sumVal();
@@ -578,11 +789,12 @@
     let firstSpend = 0,
       firstNet = 0,
       firstQ0 = 0,
-      activeInfo = null;
+      activeInfo = null,
+      spdPhaseCount = 0;
 
-    // Calcula la fracción real de ganancia de los fondos concretos que se van a vender
+    // Calcula la fracción real de ganancia de los fondos concretos seleccionados en el tramo de gasto
     const estimateGainShare = (phTargets, estGross) => {
-      const { taken, totalTaken } = withdrawBuckets(
+      const { taken, totalTaken } = withdrawBucketsStrict(
         buckets,
         phTargets,
         Math.max(1, estGross),
@@ -599,8 +811,36 @@
       return clamp(gainWeighted / totalTaken, 0, 1);
     };
 
-    // 2) Fase de retirada: encadena todos los tramos de «Gastar»
-    spdList.forEach(({ phase: ph }, idx) => {
+    // 2) Fase de retirada: recorre en orden tramos y operaciones de «Gastar»
+    let lastSpendTaxDef = baseTaxDef;
+    for (let si = 0; si < spdItems.length; si++) {
+      const entry = spdItems[si];
+      if (entry.isOp) {
+        const op = entry.op;
+        const nextPhase = spdItems.slice(si + 1).find((x) => !x.isOp)?.phase;
+        const opTaxDef = nextPhase ? T.resolve(nextPhase.tax) : lastSpendTaxDef;
+        opSnapshots[op.id] = snapshotNow(y);
+        const err = runOperation(op, ctx, opTaxDef, T);
+        if (err) issues[op.id] = err;
+        opMarkers.push({
+          year: y,
+          id: op.id,
+          group: "spend",
+          op: op.op,
+          label: App.advanced?.opChartLabel
+            ? App.advanced.opChartLabel(op)
+            : op.op,
+          err,
+        });
+        const curTot = sumVal();
+        total[y] = curTot;
+        cashSeries[y] = ctx.cash;
+        nominal[y] = curTot * cumInfl;
+        continue;
+      }
+
+      const ph = entry.phase;
+      const idx = spdPhaseCount++;
       const phYears = Math.max(1, Math.round(Number(ph.years) || 1));
       transitions.push({
         year: y,
@@ -614,9 +854,11 @@
       const infM = Math.pow(1 + infl, 1 / 12);
       const brk = (Number(ph.brokerFee) || 0) / 100;
       const taxDef = T.resolve(ph.tax);
+      lastSpendTaxDef = taxDef;
       const tau = T.moveTau(taxDef),
         dTax = T.divTax(taxDef);
       const gross = T.grossFn(taxDef);
+      const useCash = ph.useCash !== false;
       const bParams = buckets.map((b) =>
         bucketParams(b, ph, infl, brk, tau, dTax),
       );
@@ -626,12 +868,46 @@
       if (ph.retLinked) {
         phNet = lastInvNeeds + lastInvLeisure;
       } else if (ph.retBasis === "gross" && ph.retGross != null) {
-        const qStart = estimateGainShare(targets, ph.retGross * 12);
-        phNet = T.netOf(taxDef, ph.retGross * 12, qStart) / 12;
+        const annCashEst = useCash ? Math.min(ctx.cash, ph.retGross * 12) : 0;
+        const annFundGross = Math.max(0, ph.retGross * 12 - annCashEst);
+        const qStart = estimateGainShare(targets, annFundGross);
+        phNet =
+          (annCashEst +
+            (annFundGross > 0 ? T.netOf(taxDef, annFundGross, qStart) : 0)) /
+          12;
       } else {
         phNet =
           Math.max(0, Number(ph.retNeeds) || 0) +
           Math.max(0, Number(ph.retLeisure) || 0);
+      }
+
+      // Validación estricta al inicio del tramo: comprueba si los fondos elegidos tienen saldo
+      if (phNet > 0) {
+        const missing = [];
+        for (const t of targets) {
+          const hasExact = buckets.some(
+            (b) => b.fundId === t.fund.id && b.kind === t.kind && b.val > 1e-3,
+          );
+          if (!hasExact) {
+            const otherKind = t.kind === "etf" ? "index" : "etf";
+            const hasOther = buckets.some(
+              (b) =>
+                b.fundId === t.fund.id && b.kind === otherKind && b.val > 1e-3,
+            );
+            missing.push(
+              hasOther
+                ? `${t.fund.name} (${kindLabel(t.kind)}; lo tienes como ${kindLabel(otherKind)})`
+                : `${t.fund.name} (${kindLabel(t.kind)})`,
+            );
+          }
+        }
+        // Si todos los fondos elegidos faltan (y el efectivo no cubre el tramo entero) o falta alguno explícitamente pedido
+        if (missing.length) {
+          const totalNeeded = phNet * 12 * phYears;
+          if (!(useCash && ctx.cash >= totalNeeded * 0.999)) {
+            issues[ph.id] = `No tienes saldo en ${missing.join(", ")} en este punto de la línea temporal.`;
+          }
+        }
       }
 
       const startYear = y;
@@ -640,13 +916,16 @@
       for (let py = 0; py < phYears; py++) {
         const startT = sumVal(),
           startNom = nominal[y];
-        let q = estimateGainShare(targets, phNet * 12);
-        let annGross = phNet > 0 ? gross(phNet * 12, q) : 0;
-        if (Math.abs(annGross - phNet * 12) > 1) {
-          q = estimateGainShare(targets, annGross);
-          annGross = phNet > 0 ? gross(phNet * 12, q) : 0;
+        const annCashAvail = useCash ? Math.min(ctx.cash, phNet * 12) : 0;
+        const annFundNet = Math.max(0, phNet * 12 - annCashAvail);
+        let q = estimateGainShare(targets, annFundNet);
+        let annFundGross = annFundNet > 0 ? gross(annFundNet, q) : 0;
+        if (Math.abs(annFundGross - annFundNet) > 1) {
+          q = estimateGainShare(targets, annFundGross);
+          annFundGross = annFundNet > 0 ? gross(annFundNet, q) : 0;
         }
-        const spend = annGross / 12;
+        const grossRatio = annFundNet > 0 ? annFundGross / annFundNet : 1;
+        const spend = (annCashAvail + annFundGross) / 12;
 
         if (py === 0) {
           if (idx === 0) {
@@ -668,9 +947,11 @@
           }
         }
 
+        let yearShortfall = 0;
         for (let k = 0; k < 12; k++) {
-          let wSum = 0,
-            wRet = 0;
+          let wSum = ctx.cash,
+            wRet = ctx.cash * (1 / infM - 1);
+          if (ctx.cash > 0) ctx.cash = ctx.cash / infM;
           for (let bi = 0; bi < buckets.length; bi++) {
             const b = buckets[bi],
               bp = bParams[bi];
@@ -685,9 +966,31 @@
             realProd *= Math.max(1e-6, 1 + wRet / wSum);
             realMonths++;
           }
-          if (spend > 0) withdrawBuckets(buckets, targets, spend, false);
+          if (phNet > 0) {
+            let remNet = phNet;
+            if (useCash && ctx.cash > 1e-6) {
+              const fromCash = Math.min(ctx.cash, remNet);
+              ctx.cash = Math.max(0, ctx.cash - fromCash);
+              remNet -= fromCash;
+            }
+            if (remNet > 1e-6) {
+              const reqGross = remNet * grossRatio;
+              const wr = withdrawBucketsStrict(buckets, targets, reqGross, false);
+              if (wr.shortfall > 0.5) yearShortfall += wr.shortfall;
+            }
+          }
           const mvList = evAt?.[py * 12 + k];
           if (mvList) applyScheduledMoves(buckets, mvList, taxDef, T);
+        }
+
+        if (yearShortfall > 1) {
+          if (unfundedYear === null) unfundedYear = y + 1;
+          if (!issues[ph.id]) {
+            const names = targets
+              .map((t) => `${t.fund.name} (${kindLabel(t.kind)})`)
+              .join(", ");
+            issues[ph.id] = `Los fondos seleccionados (${names}) se agotan en el año ${y + 1}. Añade una operación para mover capital o selecciona otros fondos.`;
+          }
         }
 
         cumInfl *= 1 + infl;
@@ -696,13 +999,16 @@
         invested.push(inv);
         price.push(null);
         total.push(tot);
+        cashSeries.push(ctx.cash);
         nominal.push(nom);
         decline.push(tot < startT * 0.9999);
         nominalDecline.push(nom < startNom * 0.9999);
         if (tot <= 1e-6 && depleted === null) depleted = y + 1;
         y++;
       }
-    });
+    }
+
+    opSnapshots["end:spend"] = snapshotNow(y);
 
     const years = y;
     const shown = activeInfo || {
@@ -718,10 +1024,12 @@
       invested,
       price,
       total,
+      cash: cashSeries,
       decline,
       nominal,
       nominalDecline,
       depleted,
+      unfundedYear,
       capital,
       spend: shown.spend,
       net: shown.net,
@@ -729,6 +1037,9 @@
       activeStartYear: shown.startYear,
       activeStartInfl: shown.startInfl,
       transitions,
+      opMarkers,
+      issues,
+      opSnapshots,
       withdrawalRate: capital > 0 ? (firstSpend * 12) / capital : Infinity,
       realReturn:
         realMonths > 0 ? Math.pow(realProd, 12 / realMonths) - 1 : 0,
@@ -980,7 +1291,7 @@
     return { prob, score: 50 * prob + 50 * prob * (fails ? early / fails : 0) };
   }
 
-  /** Riesgo multi-tramo por huchas para Modo Avanzado: Monte Carlo secuencial correlacionado (mismos bloques históricos para todos los fondos). */
+  /** Riesgo multi-tramo por huchas + operaciones + retirada estricta para Modo Avanzado. */
   function riskAdvanced(s, p, rateOf, inputs, runs = 300) {
     const T = App.taxes,
       infl = inputs?.infl || null,
@@ -988,10 +1299,11 @@
       pm = inputs?.phaseMarkets || {},
       rates = p.adv.rates || {},
       vt = config.FUNDS.find((f) => f.id === "VT"),
-      baseTax = p.adv.spend[0]?.phase.tax || s.tax,
+      firstSpd = p.adv.spend.find((x) => !x.isOp)?.phase,
+      baseTax = firstSpd?.tax || s.tax,
       baseTaxDef = T.resolve(baseTax);
 
-    // Recolecta todas las huchas (fundId|provId) que se crean en los tramos de inversión
+    // Recolecta todas las huchas (fundId|provId) posibles: de fases de inversión y de operaciones comprar/mover
     const specs = [];
     const specIdx = new Map();
     const ensureSpec = (fund, prov) => {
@@ -1011,11 +1323,17 @@
       }
       return i;
     };
-    p.adv.invest.forEach(({ phase: ph }) => {
-      phaseTargets(ph).forEach((t) => ensureSpec(t.fund, t.prov));
-    });
+    for (const entry of [...p.adv.invest, ...p.adv.spend]) {
+      if (entry.isOp) {
+        if (entry.op.op === "buy" || entry.op.op === "move") {
+          const d = opDestProvider(entry.op);
+          if (d) ensureSpec(d.fund, d.prov);
+        }
+      } else if (p.adv.invest.includes(entry)) {
+        phaseTargets(entry.phase).forEach((t) => ensureSpec(t.fund, t.prov));
+      }
+    }
 
-    // Alinea todos los históricos por el final (mes más reciente) para preservar correlaciones reales entre fondos
     const lengths = specs
       .map((sp) => fm[sp.fundId]?.returns?.length || 0)
       .filter((l) => l > 0);
@@ -1073,9 +1391,14 @@
 
     let lastInvNeeds = 0,
       lastInvLeisure = 0,
-      anyCapped = false;
+      anyCapped = false,
+      invPhaseIdx = 0;
 
-    const invSteps = p.adv.invest.map(({ phase: ph, port }, idx) => {
+    const invSteps = p.adv.invest.map((entry) => {
+      if (entry.isOp) return { isOp: true, op: entry.op, taxDef: baseTaxDef };
+      const ph = entry.phase,
+        port = entry.port,
+        idx = invPhaseIdx++;
       const years = Math.max(1, Math.round(Number(ph.years) || 1));
       const months = years * 12;
       const nv = normInvestValues(ph);
@@ -1088,9 +1411,11 @@
       const ps = buildPhaseSeries(ph, baseTaxDef);
       if (ps.anyCapped) anyCapped = true;
       return {
+        isOp: false,
         years,
         months,
-        extra: idx > 0 ? Math.max(0, Number(ph.initial) || 0) : 0,
+        isFirst: idx === 0,
+        initial: Math.max(0, Number(ph.initial) || 0),
         invest: nv.invest,
         targets,
         inflBase: (Number(ph.inflation) || 0) / 100,
@@ -1103,18 +1428,32 @@
       };
     });
 
-    const spdSteps = p.adv.spend.map(({ phase: ph, port }) => {
+    let lastSpdTaxDef = baseTaxDef;
+    const spdSteps = p.adv.spend.map((entry, si) => {
+      if (entry.isOp) {
+        const nextP = p.adv.spend.slice(si + 1).find((x) => !x.isOp)?.phase;
+        return {
+          isOp: true,
+          op: entry.op,
+          taxDef: nextP ? T.resolve(nextP.tax) : lastSpdTaxDef,
+        };
+      }
+      const ph = entry.phase,
+        port = entry.port;
       const years = Math.max(1, Math.round(Number(ph.years) || 1));
       const months = years * 12;
       const taxDef = T.resolve(ph.tax);
+      lastSpdTaxDef = taxDef;
       const targets = phaseTargets(ph);
       const ps = buildPhaseSeries(ph, taxDef);
       if (ps.anyCapped) anyCapped = true;
       return {
+        isOp: false,
         years,
         months,
         phase: ph,
         targets,
+        useCash: ph.useCash !== false,
         inflBase: (Number(ph.inflation) || 0) / 100,
         series: ps.list,
         evAt: buildPhaseBucketMoves(ph, months),
@@ -1127,8 +1466,8 @@
       };
     });
 
-    const totalSpendM = spdSteps.reduce((a, x) => a + x.months, 0) || 1;
-    const init0 = Math.max(0, Number(p.adv.invest[0]?.phase.initial) || 0);
+    const totalSpendM =
+      spdSteps.reduce((a, x) => a + (x.isOp ? 0 : x.months), 0) || 1;
     const rand = rng(20261107);
     let fails = 0,
       early = 0;
@@ -1142,9 +1481,18 @@
       priceVal: 0,
       basis: 0,
     }));
+    const simCtx = {
+      buckets: simBuckets,
+      cash: 0,
+      getBucket(fund, prov) {
+        const key = `${fund.id}|${prov.id}`;
+        const idx = specIdx.get(key);
+        return simBuckets[idx];
+      },
+    };
 
     const simGainShare = (targets, estGross) => {
-      const { taken, totalTaken } = withdrawBuckets(
+      const { taken, totalTaken } = withdrawBucketsStrict(
         simBuckets,
         targets,
         Math.max(1, estGross),
@@ -1166,13 +1514,7 @@
         simBuckets[i].priceVal = 0;
         simBuckets[i].basis = 0;
       }
-      if (init0 > 0 && invSteps[0]) {
-        for (const t of invSteps[0].targets) {
-          const amt = init0 * t.weight;
-          simBuckets[t.idx].val += amt;
-          simBuckets[t.idx].basis += amt;
-        }
-      }
+      simCtx.cash = 0;
 
       let failed = false,
         spendElapsed = 0,
@@ -1190,9 +1532,13 @@
       };
 
       for (const st of invSteps) {
-        if (st.extra > 0) {
+        if (st.isOp) {
+          runOperation(st.op, simCtx, st.taxDef, T);
+          continue;
+        }
+        if (st.initial > 0) {
           for (const t of st.targets) {
-            const amt = st.extra * t.weight;
+            const amt = st.initial * t.weight;
             simBuckets[t.idx].val += amt;
             simBuckets[t.idx].basis += amt;
           }
@@ -1210,6 +1556,7 @@
                   ),
                 1 / 12,
               );
+          if (simCtx.cash > 0) simCtx.cash *= invInf;
           const mi = nextBlockIdx();
           for (let bi = 0; bi < simBuckets.length; bi++) {
             const b = simBuckets[bi];
@@ -1238,19 +1585,25 @@
 
       for (const st of spdSteps) {
         if (failed) break;
+        if (st.isOp) {
+          runOperation(st.op, simCtx, st.taxDef, T);
+          continue;
+        }
         const ph = st.phase;
         let phNet;
         if (ph.retLinked) phNet = st.linkedNet;
         else if (ph.retBasis === "gross" && ph.retGross != null) {
-          const q0 = simGainShare(st.targets, ph.retGross * 12);
-          phNet = T.netOf(st.taxDef, ph.retGross * 12, q0) / 12;
+          const annC = st.useCash ? Math.min(simCtx.cash, ph.retGross * 12) : 0;
+          const annFG = Math.max(0, ph.retGross * 12 - annC);
+          const q0 = simGainShare(st.targets, annFG);
+          phNet = (annC + (annFG > 0 ? T.netOf(st.taxDef, annFG, q0) : 0)) / 12;
         } else {
           phNet =
             Math.max(0, Number(ph.retNeeds) || 0) +
             Math.max(0, Number(ph.retLeisure) || 0);
         }
         let invInf = 1,
-          spend = 0;
+          grossRatio = 1;
         for (let m = 0; m < st.months; m++) {
           if (m % 12 === 0) {
             invInf =
@@ -1263,9 +1616,13 @@
                   ),
                 1 / 12,
               );
-            const q = simGainShare(st.targets, phNet * 12);
-            spend = phNet > 0 ? st.gross(phNet * 12, q) / 12 : 0;
+            const annC = st.useCash ? Math.min(simCtx.cash, phNet * 12) : 0;
+            const annFN = Math.max(0, phNet * 12 - annC);
+            const q = simGainShare(st.targets, annFN);
+            const annFG = annFN > 0 ? st.gross(annFN, q) : 0;
+            grossRatio = annFN > 0 ? annFG / annFN : 1;
           }
+          if (simCtx.cash > 0) simCtx.cash *= invInf;
           const mi = nextBlockIdx();
           for (let bi = 0; bi < simBuckets.length; bi++) {
             const b = simBuckets[bi];
@@ -1280,17 +1637,30 @@
             b.basis = b.basis * invInf + b.val * sr.divM;
             b.val = b.val * (1 + g);
           }
-          if (spend > 0) withdrawBuckets(simBuckets, st.targets, spend, false);
+          if (phNet > 0) {
+            let remNet = phNet;
+            if (st.useCash && simCtx.cash > 1e-6) {
+              const fromCash = Math.min(simCtx.cash, remNet);
+              simCtx.cash = Math.max(0, simCtx.cash - fromCash);
+              remNet -= fromCash;
+            }
+            if (remNet > 1e-6) {
+              const wr = withdrawBucketsStrict(
+                simBuckets,
+                st.targets,
+                remNet * grossRatio,
+                false,
+              );
+              if (wr.shortfall > 0.5) {
+                fails++;
+                early += 1 - spendElapsed / totalSpendM;
+                failed = true;
+                break;
+              }
+            }
+          }
           const mvList = st.evAt?.[m];
           if (mvList) applyScheduledMoves(simBuckets, mvList, st.taxDef, T);
-          let tot = 0;
-          for (let bi = 0; bi < simBuckets.length; bi++) tot += simBuckets[bi].val;
-          if (tot <= 1e-6) {
-            fails++;
-            early += 1 - spendElapsed / totalSpendM;
-            failed = true;
-            break;
-          }
           spendElapsed++;
         }
       }
@@ -1301,7 +1671,7 @@
       50 * prob + 50 * prob * (fails ? early / fails : 0),
     );
     const [, level, color] = LEVELS.find((l) => score < l[0]);
-    const all = [...invSteps, ...spdSteps];
+    const all = [...invSteps, ...spdSteps].filter((x) => !x.isOp);
     const totalY = all.reduce((a, x) => a + x.years, 0) || 1;
     const withM = all.filter((x) => x.market);
     return {
@@ -1465,26 +1835,16 @@
     ];
     return defs.map((d) => {
       const ns = structuredClone(base);
-      if (
-        ns.advancedMode &&
-        ns.advanced?.invest?.length &&
-        ns.advanced?.spend?.length
-      ) {
-        const lastInv = normInvestValues(
-          ns.advanced.invest[ns.advanced.invest.length - 1],
-        );
+      const invPhases = onlyPhases(ns.advanced?.invest);
+      const spdPhases = onlyPhases(ns.advanced?.spend);
+      if (ns.advancedMode && invPhases.length && spdPhases.length) {
+        const lastInv = normInvestValues(invPhases[invPhases.length - 1]);
         ns.net = lastInv.net;
         ns.needs = lastInv.needs;
         ns.leisure = lastInv.leisure;
-        ns.initial = ns.advanced.invest[0].initial;
-        ns.workYears = ns.advanced.invest.reduce(
-          (a, x) => a + (x.years || 1),
-          0,
-        );
-        ns.retireYears = ns.advanced.spend.reduce(
-          (a, x) => a + (x.years || 1),
-          0,
-        );
+        ns.initial = invPhases[0].initial;
+        ns.workYears = invPhases.reduce((a, x) => a + (x.years || 1), 0);
+        ns.retireYears = spdPhases.reduce((a, x) => a + (x.years || 1), 0);
         ns.advancedMode = false;
       }
       const ok = d.patch(ns) !== false;

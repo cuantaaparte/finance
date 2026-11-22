@@ -46,7 +46,7 @@
     saveTimer = 0; // guardado en localStorage con retraso
   let dragging = false,
     heavyPending = false; // slider pulsado / lo pesado está pendiente
-  let lastRes = null; // última simulación: de aquí salen el bruto del primer año de jubilación y la parte que es ganancia
+  let lastRes = null; // última simulación: de aquí salen el bruto del primer año de jubilación, la parte que es ganancia, errores y saldos de operaciones
   let advPanels = null; // recuadros de línea de tiempo (Invertir / Gastar) del Modo Avanzado
   // Ajustes de VISTA que una estrategia no debe pisar (antes, al aplicar una, volvía a "Salario medio" porque la copia guardaba el valor antiguo).
   const VIEW_KEYS = [
@@ -72,6 +72,9 @@
   };
   const factor = () => (state.period === "year" ? 12 : 1);
   const clamp = (x, a, b) => Math.min(Math.max(x, a), b);
+  const setKids = (el, ...kids) =>
+    el.replaceChildren(...kids.filter((x) => x != null && x !== false));
+
   /** Periodo de histórico elegido: por defecto, desde que hay datos de TODOS los índices hasta el último dato. `years` = duración real. */
   let hrMemo = null; // se llama decenas de veces por pintado con los mismos datos
   function histRange(s = state) {
@@ -91,18 +94,22 @@
   const inputsOf = (s) => {
     const histY = Math.max(Math.ceil(histRange(s).years), 20);
     const infl = data.inflationStats(30);
-    if (
-      s.advancedMode &&
-      s.advanced?.invest?.length &&
-      s.advanced?.spend?.length
-    ) {
+    const invPhases = advanced.phasesOf(s.advanced?.invest);
+    const spdPhases = advanced.phasesOf(s.advanced?.spend);
+    if (s.advancedMode && invPhases.length && spdPhases.length) {
       const phaseMarkets = {};
       const fundMarkets = {};
-      for (const ph of [...s.advanced.invest, ...s.advanced.spend]) {
-        phaseMarkets[ph.id] = data.portfolioStats(ph.alloc, histY);
-        for (const id of Object.keys(ph.alloc || {})) {
-          if (!(id in fundMarkets))
-            fundMarkets[id] = data.portfolioStats({ [id]: 100 }, histY);
+      const recordFund = (id) => {
+        if (id && !(id in fundMarkets))
+          fundMarkets[id] = data.portfolioStats({ [id]: 100 }, histY);
+      };
+      for (const item of [...s.advanced.invest, ...s.advanced.spend]) {
+        if (advanced.isOp(item)) {
+          recordFund(item.fromFund);
+          recordFund(item.toFund);
+        } else {
+          phaseMarkets[item.id] = data.portfolioStats(item.alloc, histY);
+          Object.keys(item.alloc || {}).forEach(recordFund);
         }
       }
       return {
@@ -157,7 +164,7 @@
       else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
       else e.setAttribute(k, v);
     }
-    e.append(...kids.filter((x) => x != null));
+    e.append(...kids.filter((x) => x != null && x !== false));
     return e;
   }
 
@@ -674,6 +681,8 @@
           advanced.addPhase(state, group);
           refresh();
         },
+        onAddOp: (group) => openOpDialog(group, null),
+        onEditOp: (group, id) => openOpDialog(group, id),
         onSelect: (group, id) => {
           advanced.selectPhase(state, group, id);
           refresh(false);
@@ -702,7 +711,7 @@
           const cur = advanced.getActive(state);
           if (cur.group !== group) return;
           advanced.renamePhase(state, group, cur.phase.id, val);
-          advanced.renderPanels(advPanels, state);
+          advanced.renderPanels(advPanels, state, lastRes?.issues);
           syncChartLabel(
             cur.phase.id,
             String(cur.phase.label || "").trim() || String(cur.index + 1),
@@ -717,12 +726,12 @@
             String(cur.index + 1),
           );
           advanced.renamePhase(state, group, cur.phase.id, cleaned);
-          advanced.renderPanels(advPanels, state);
+          advanced.renderPanels(advPanels, state, lastRes?.issues);
           syncChartLabel(cur.phase.id, cleaned);
           scheduleSave();
         },
         onReorder: (group, fromIdx, toIdx) => {
-          if (advanced.reorderPhase(state, group, fromIdx, toIdx)) refresh();
+          if (advanced.reorderItem(state, group, fromIdx, toIdx)) refresh();
         },
       });
       advPanels.addEventListener("focusout", (e) => {
@@ -747,6 +756,34 @@
         sec.note ? h("p", { class: "note" }, sec.note) : null,
         ...sec.fields.map(buildField),
       );
+      if (sec.id === "retire") {
+        // Casilla exclusiva del Modo Avanzado para gastar el efectivo acumulado por operaciones de venta
+        card.append(
+          h(
+            "label",
+            {
+              class: "check",
+              id: "adv-use-cash-wrap",
+              hidden: "",
+              title:
+                "Si tienes dinero en efectivo (por operaciones de venta), se gasta primero sin volver a pagar impuestos antes de vender fondos.",
+            },
+            h("input", {
+              type: "checkbox",
+              id: "adv-use-cash",
+              oninput: (e) => {
+                if (!state.advancedMode) return;
+                const cur = advanced.getActive(state);
+                if (cur.group === "spend") {
+                  cur.phase.useCash = e.target.checked;
+                  refresh();
+                }
+              },
+            }),
+            "Usar efectivo disponible antes de vender fondos",
+          ),
+        );
+      }
       if (sec.custom === "funds") card.append(buildFunds());
       $("#col-" + sec.col).append(card);
     });
@@ -916,14 +953,14 @@
     customFunds.sync(state.customFunds, rateOf);
   }
 
-  /** Actualiza visibilidad condicional de secciones, paneles de línea de tiempo, título de fondos y color vinculado de sliders en Modo Avanzado. */
+  /** Actualiza visibilidad condicional de secciones, paneles de línea de tiempo, título de fondos, opción de efectivo y color vinculado de sliders en Modo Avanzado. */
   function renderAdvanced() {
     const on = !!state.advancedMode;
     document.body.classList.toggle("tl-active", on);
     const panels = ensureAdvPanels();
     const info = on ? advanced.getActive(state) : null;
     const group = info ? info.group : null;
-    advanced.renderPanels(panels, state);
+    advanced.renderPanels(panels, state, lastRes?.issues);
 
     const show = (sel, vis) => {
       const el = $(sel);
@@ -934,6 +971,17 @@
     show(".sec-plan", !on || group === "invest");
     show(".sec-retire", !on || group === "spend");
     show(".sec-funds", true);
+
+    const ucWrap = $("#adv-use-cash-wrap");
+    if (ucWrap) {
+      const showCash = on && group === "spend";
+      ucWrap.hidden = !showCash;
+      if (showCash) {
+        const chk = $("#adv-use-cash");
+        const want = info.phase.useCash !== false;
+        if (chk && chk.checked !== want) chk.checked = want;
+      }
+    }
 
     const fundsH2 = $(".sec-funds > h2");
     if (fundsH2) {
@@ -1047,11 +1095,16 @@
       return "Sin datos reales: la rentabilidad es una estimación fija y no cambia con los años.";
     const idSet = new Set(Object.keys(state.alloc));
     if (state.advancedMode && state.advanced) {
-      for (const ph of [
+      for (const item of [
         ...(state.advanced.invest || []),
         ...(state.advanced.spend || []),
       ]) {
-        Object.keys(ph.alloc || {}).forEach((id) => idSet.add(id));
+        if (advanced.isOp(item)) {
+          if (item.fromFund) idSet.add(item.fromFund);
+          if (item.toFund) idSet.add(item.toFund);
+        } else {
+          Object.keys(item.alloc || {}).forEach((id) => idSet.add(id));
+        }
       }
     }
     const selected = [...idSet]
@@ -1070,12 +1123,21 @@
 
   function renderHist(force = false) {
     const st = data.status(),
+      opFunds = state.advancedMode
+        ? [
+            ...(state.advanced?.invest || []),
+            ...(state.advanced?.spend || []),
+          ]
+            .filter(advanced.isOp)
+            .map((o) => `${o.fromFund}:${o.toFund}`)
+        : [],
       sig = JSON.stringify([
         state.histFrom,
         state.histTo,
         state.advancedMode,
         state.advanced?.activeGroup,
         state.advanced?.activeId,
+        opFunds,
         Object.keys(state.alloc),
         state.customFunds.map((d) => d.mimic?.fund || ""),
         st.mode,
@@ -1321,7 +1383,11 @@
           w === "bad"
             ? "Retirada muy alta" +
               p +
-              (lastRes.depleted !== null ? ": el dinero se agota" : "")
+              (lastRes.depleted != null
+                ? ": el dinero se agota"
+                : lastRes.unfundedYear != null
+                  ? ": los fondos elegidos se quedan sin saldo"
+                  : "")
             : warn
               ? "Retirada alta" +
                 p +
@@ -1347,24 +1413,39 @@
   }
 
   const wrState = (res) =>
-    res.depleted !== null || res.withdrawalRate > 0.06
+    res.depleted != null ||
+    res.unfundedYear != null ||
+    res.withdrawalRate > 0.06
       ? "bad"
       : res.withdrawalRate > 0.04
         ? "warn"
-        : "ok"; // naranja desde el 4 %, rojo desde el 6 % o si el dinero se agota
+        : "ok"; // naranja desde el 4 %, rojo desde el 6 % o si el dinero/fondos se agotan
   let kpiEls = null; // las 4 tarjetas se crean una vez; luego solo cambian sus textos
   function renderKpis(res) {
     const rate = res.withdrawalRate,
-      wr = wrState(res);
+      wr = wrState(res),
+      issueList =
+        state.advancedMode && res.issues ? Object.values(res.issues) : [];
+    let statusTxt = "Sostenible",
+      statusCls = "ok",
+      statusTip = "";
+    if (res.depleted != null) {
+      statusTxt = `Se agota año ${res.depleted}`;
+      statusCls = "bad";
+    } else if (res.unfundedYear != null) {
+      statusTxt = `Sin saldo año ${res.unfundedYear}`;
+      statusCls = "bad";
+      statusTip = issueList.join("\n");
+    } else if (issueList.length) {
+      statusTxt = "Revisar avisos";
+      statusCls = "warn";
+      statusTip = issueList.join("\n");
+    }
     const items = [
-      ["Capital al jubilarte", eur.format(res.capital), ""],
-      ["Retirada anual", Number.isFinite(rate) ? pct(rate) : "—", wr],
-      ["Rentab. real", pct(res.realReturn), ""],
-      [
-        "Estado",
-        res.depleted ? `Se agota año ${res.depleted}` : "Sostenible",
-        res.depleted ? "bad" : "ok",
-      ],
+      ["Capital al jubilarte", eur.format(res.capital), "", ""],
+      ["Retirada anual", Number.isFinite(rate) ? pct(rate) : "—", wr, ""],
+      ["Rentab. real", pct(res.realReturn), "", ""],
+      ["Estado", statusTxt, statusCls, statusTip],
     ];
     if (!kpiEls) {
       kpiEls = items.map(([l]) =>
@@ -1372,11 +1453,12 @@
       );
       $("#kpis").replaceChildren(...kpiEls);
     }
-    items.forEach(([, v, c], i) => {
+    items.forEach(([, v, c, tip], i) => {
       const d = kpiEls[i],
         cls = "kpi " + c;
       setText(d.lastChild, v);
       if (d.className !== cls) d.className = cls;
+      if (d.title !== tip) d.title = tip;
     });
   }
 
@@ -1581,14 +1663,20 @@
       const s = sc.state,
         m = s.period === "year" ? 12 : 1,
         u = s.period === "year" ? "/año" : "/mes";
-      if (
-        s.advancedMode &&
-        s.advanced?.invest?.length &&
-        s.advanced?.spend?.length
-      ) {
-        const wY = s.advanced.invest.reduce((a, x) => a + (x.years || 0), 0);
-        const rY = s.advanced.spend.reduce((a, x) => a + (x.years || 0), 0);
-        return `⚡ Modo Avanzado · ${s.advanced.invest.length} tramo(s) invertir (${wY} años) · ${s.advanced.spend.length} tramo(s) gastar (${rY} años) · inicial ${eur.format(s.advanced.invest[0].initial || 0)}`;
+      const invPhases = advanced.phasesOf(s.advanced?.invest);
+      const spdPhases = advanced.phasesOf(s.advanced?.spend);
+      if (s.advancedMode && invPhases.length && spdPhases.length) {
+        const wY = invPhases.reduce((a, x) => a + (x.years || 0), 0);
+        const rY = spdPhases.reduce((a, x) => a + (x.years || 0), 0);
+        const opCnt = [
+          ...(s.advanced.invest || []),
+          ...(s.advanced.spend || []),
+        ].filter(advanced.isOp).length;
+        return (
+          `⚡ Modo Avanzado · ${invPhases.length} tramo(s) invertir (${wY} años) · ${spdPhases.length} tramo(s) gastar (${rY} años)` +
+          (opCnt ? ` · ${opCnt} op.` : "") +
+          ` · inicial ${eur.format(invPhases[0].initial || 0)}`
+        );
       }
       return (
         `Neto ${eur.format(s.net * m)}${u} · invierte ${eur.format(s.invest * m)}${u} · inicial ${eur.format(s.initial)} · ${s.workYears} años · inflación ${s.inflation} % · histórico ${s.histFrom || s.histTo ? `${s.histFrom ?? "…"}–${s.histTo ?? "hoy"}` : "por defecto"} · bróker ${s.brokerFee} % · impuestos ${taxes.label(s.tax)} · ` +
@@ -1933,7 +2021,8 @@
       cur !== "EUR"
         ? ` Tipo de cambio: ${String(round(def.fx, 4)).replace(".", ",")} ${cur} por €${taxes.fxDate() && !def.custom ? " (" + new Date(taxes.fxDate()).toLocaleDateString("es-ES") + ")" : ""}.`
         : "";
-    $("#tax-body").replaceChildren(
+    setKids(
+      $("#tax-body"),
       h(
         "div",
         { class: "tax-row" },
@@ -2125,7 +2214,8 @@
         h("td", { class: "num" }, eur.format(y / 12)),
         h("td", { class: "num" }, eur.format((y / 12) * f)),
       );
-    $("#tax-sum").replaceChildren(
+    setKids(
+      $("#tax-sum"),
       h(
         "thead",
         {},
@@ -2273,6 +2363,588 @@
     });
   }
 
+  /* ---------- Operaciones del Modo Avanzado (vender, comprar y mover fondos) ---------- */
+  let opDlgGroup = "invest",
+    opEditId = null,
+    opDraft = null,
+    opTaxTouched = false;
+
+  const opSnapNow = () => {
+    const snaps = lastRes?.opSnapshots;
+    if (!snaps) return { year: 0, cash: 0, total: 0, holdings: [] };
+    return (
+      (opEditId ? snaps[opEditId] : snaps[`end:${opDlgGroup}`]) || {
+        year: 0,
+        cash: 0,
+        total: 0,
+        holdings: [],
+      }
+    );
+  };
+
+  function opAvailInSnap(snap, op) {
+    if (!snap || !op) return 0;
+    if (op.op === "buy") return Math.max(0, snap.cash || 0);
+    const fk = op.fromKind === "etf" ? "etf" : "index";
+    const row = (snap.holdings || []).find(
+      (x) => x.fundId === op.fromFund && x.kind === fk,
+    );
+    return row ? row.val : 0;
+  }
+
+  function opLiveWarning(snap, op) {
+    if (!op) return "";
+    const amt = Number(op.amount) || 0;
+    if (!(amt > 0)) return "Indica una cantidad mayor que 0.";
+    const avail = opAvailInSnap(snap, op);
+    const fname = (id) =>
+      config.FUNDS.find((x) => x.id === id)?.name || id || "fondo";
+    const kl = (k) => (k === "etf" ? "ETF" : "Fondo");
+    if (op.op === "buy") {
+      if (avail <= 0.5)
+        return "No tienes efectivo disponible en este punto. Añade antes una operación de venta.";
+      if (op.amountMode === "eur" && amt > avail + 1)
+        return `Supera tu efectivo disponible (${eur.format(avail)}).`;
+      return "";
+    }
+    if (avail <= 0.5) {
+      const other = op.fromKind === "etf" ? "index" : "etf";
+      const hasOther = (snap.holdings || []).some(
+        (x) => x.fundId === op.fromFund && x.kind === other && x.val > 0.5,
+      );
+      return hasOther
+        ? `No tienes saldo en ${fname(op.fromFund)} (${kl(op.fromKind)}); lo tienes como ${kl(other)}.`
+        : `No tienes saldo en ${fname(op.fromFund)} (${kl(op.fromKind)}) en este punto.`;
+    }
+    if (op.amountMode === "eur" && amt > avail + 1)
+      return `Supera el saldo disponible en ${fname(op.fromFund)} (${eur.format(avail)}).`;
+    if (
+      op.op === "move" &&
+      op.fromFund === op.toFund &&
+      op.fromKind === op.toKind
+    ) {
+      const row = (snap.holdings || []).find(
+        (x) => x.fundId === op.fromFund && x.kind === op.fromKind,
+      );
+      if (!row || row.provId === op.toProv)
+        return "El origen y el destino son el mismo fondo y gestor.";
+    }
+    return "";
+  }
+
+  function openOpDialog(group, id = null) {
+    opDlgGroup = group === "spend" ? "spend" : "invest";
+    const list = state.advanced?.[opDlgGroup] || [];
+    const cur = id ? list.find((x) => x.id === id && advanced.isOp(x)) : null;
+    opEditId = cur ? cur.id : null;
+    opTaxTouched = !!cur;
+    if (cur) {
+      opDraft = structuredClone(cur);
+    } else {
+      const snap = opSnapNow();
+      const top = snap.holdings?.[0];
+      const f0 = top?.fundId || config.FUNDS[0]?.id || "VT";
+      const k0 = top?.kind || advanced.defaultKindOfFund(f0);
+      const otherF =
+        config.FUNDS.find((f) => f.id !== f0)?.id || config.FUNDS[0]?.id || "VT";
+      const initOp =
+        snap.cash > 1 && !(snap.holdings && snap.holdings.length)
+          ? "buy"
+          : "move";
+      opDraft = advanced.createOp(opDlgGroup, list, {
+        op: initOp,
+        fromFund: f0,
+        fromKind: k0,
+        toFund: initOp === "buy" ? f0 : otherF,
+        toKind: advanced.defaultKindOfFund(initOp === "buy" ? f0 : otherF),
+        amountMode: "pct",
+        amount: 100,
+      });
+    }
+    renderOpDlg();
+    const dlg = $("#op-dlg");
+    if (!dlg.open) dlg.showModal();
+  }
+
+  function opKindToggle(role, fundId, curKind) {
+    const f = config.FUNDS.find((x) => x.id === fundId);
+    const hasIndex = f
+      ? f.custom
+        ? f.kind !== "etf"
+        : f.providers.some((p) => p.kind === "index")
+      : true;
+    const hasEtf = f
+      ? f.custom
+        ? f.kind === "etf"
+        : f.providers.some((p) => p.kind === "etf")
+      : true;
+    return h(
+      "div",
+      { class: "seg seg-s" },
+      ...[
+        ["index", "Fondo", !hasIndex],
+        ["etf", "ETF", !hasEtf],
+      ].map(([v, l, dis]) =>
+        h(
+          "button",
+          {
+            type: "button",
+            class: v === curKind ? "on" : "",
+            disabled: dis ? "" : null,
+            onclick: () => {
+              if (dis) return;
+              if (role === "from") opDraft.fromKind = v;
+              else {
+                opDraft.toKind = v;
+                opDraft.toProv = advanced.defaultProvOfFund(opDraft.toFund, v);
+              }
+              if (!opTaxTouched) opDraft.taxed = advanced.opTaxDefault(opDraft);
+              renderOpDlg();
+            },
+          },
+          l,
+        ),
+      ),
+    );
+  }
+
+  function updateOpPreviewText() {
+    const body = $("#op-body");
+    if (!body || !opDraft) return;
+    const snap = opSnapNow();
+    const avail = opAvailInSnap(snap, opDraft);
+    const nameInp = $('[data-op="name"]', body);
+    if (nameInp) nameInp.placeholder = advanced.opAutoChartLabel(opDraft);
+    const prev = $("#op-amt-preview", body);
+    if (prev) {
+      const a = Number(opDraft.amount) || 0;
+      const est =
+        opDraft.amountMode === "pct"
+          ? avail * (clamp(a, 0, 100) / 100)
+          : Math.min(avail, a);
+      prev.textContent =
+        avail > 0.5
+          ? `Disponible aquí: ${eur.format(avail)} · operación ≈ ${eur.format(est)}`
+          : "Disponible aquí: 0 €";
+    }
+    const warnEl = $("#op-warn", body);
+    if (warnEl) {
+      const w = opLiveWarning(snap, opDraft);
+      warnEl.hidden = !w;
+      warnEl.textContent = w ? "⚠ " + w : "";
+    }
+  }
+
+  function renderOpDlg() {
+    const body = $("#op-body");
+    if (!body || !opDraft) return;
+    const snap = opSnapNow();
+    const grpName = opDlgGroup === "spend" ? "Gastar" : "Invertir";
+    $("#op-title").textContent = opEditId
+      ? `⚡ Editar operación · ${grpName}`
+      : `⚡ Nueva operación · ${grpName}`;
+
+    const balByFund = new Map();
+    for (const row of snap.holdings || []) {
+      balByFund.set(row.fundId, (balByFund.get(row.fundId) || 0) + row.val);
+    }
+
+    const fundSelect = (role, val) => {
+      const sel = h(
+        "select",
+        {
+          "data-op": role,
+          "aria-label":
+            role === "fromFund" ? "Fondo de origen" : "Fondo de destino",
+        },
+        ...config.FUNDS.map((f) => {
+          const b = balByFund.get(f.id) || 0;
+          const suffix =
+            role === "fromFund" && b > 0.5 ? ` · ${eur.format(b)}` : "";
+          return h("option", { value: f.id }, f.name + suffix);
+        }),
+      );
+      sel.value = val;
+      return sel;
+    };
+
+    const destFundObj = config.FUNDS.find((x) => x.id === opDraft.toFund);
+    const destProvs = destFundObj
+      ? destFundObj.providers.filter((p) => p.kind === opDraft.toKind)
+      : [];
+    const provList = destProvs.length ? destProvs : destFundObj?.providers || [];
+    const provSel =
+      opDraft.op !== "sell" && provList.length > 1
+        ? (() => {
+            const s = h(
+              "select",
+              { "data-op": "toProv", "aria-label": "Gestor de destino" },
+              ...provList.map((p) =>
+                h("option", { value: p.id }, `${p.name} · TER ${p.ter} %`),
+              ),
+            );
+            s.value = provList.some((p) => p.id === opDraft.toProv)
+              ? opDraft.toProv
+              : provList[0].id;
+            opDraft.toProv = s.value;
+            return s;
+          })()
+        : null;
+
+    const holdingsChips = (snap.holdings || []).length
+      ? h(
+          "div",
+          { class: "op-chips" },
+          ...snap.holdings.map((x) =>
+            h(
+              "span",
+              { class: "op-chip" },
+              `${advanced.fundShort(x.fundId)} (${x.kind === "etf" ? "ETF" : "Fondo"}): `,
+              h("b", {}, eur.format(x.val)),
+            ),
+          ),
+        )
+      : h(
+          "small",
+          { class: "muted" },
+          "Todavía no hay saldo acumulado en fondos en este punto.",
+        );
+
+    const taxNote =
+      opDraft.op === "buy"
+        ? "Comprar usando tu efectivo disponible no genera impuestos."
+        : opDraft.op === "sell"
+          ? "Al vender se tributa por la ganancia acumulada y el importe neto pasa a efectivo."
+          : opDraft.fromKind === "index" && opDraft.toKind === "index"
+            ? "Traspaso entre fondos: exento de impuestos (conserva el coste fiscal original)."
+            : "Interviene un ETF: al mover el dinero se tributa por la ganancia acumulada.";
+
+    const avail = opAvailInSnap(snap, opDraft);
+    const isPct = opDraft.amountMode === "pct";
+    const warnTxt = opLiveWarning(snap, opDraft);
+
+    setKids(
+      body,
+      h(
+        "div",
+        { class: "op-snap" },
+        h(
+          "div",
+          { class: "op-snap-top" },
+          h(
+            "span",
+            {},
+            opEditId
+              ? `Posición en ${grpName}: año ${snap.year}`
+              : `Se colocará al final de ${grpName} (año ${snap.year})`,
+          ),
+          h(
+            "span",
+            { class: "op-cash-badge" },
+            "💵 Efectivo disponible: ",
+            h("b", {}, eur.format(snap.cash || 0)),
+          ),
+        ),
+        holdingsChips,
+      ),
+      !opEditId
+        ? h(
+            "p",
+            { class: "note" },
+            "Después de crearla podrás arrastrarla entre los tramos de este mismo bloque.",
+          )
+        : null,
+      h(
+        "div",
+        { class: "op-warn", id: "op-warn", hidden: warnTxt ? null : "" },
+        warnTxt ? "⚠ " + warnTxt : "",
+      ),
+      h(
+        "div",
+        { class: "field" },
+        h("label", {}, "Tipo de operación"),
+        segBtns(
+          [
+            ["sell", "💵 Vender"],
+            ["buy", "🛒 Comprar"],
+            ["move", "🔁 Mover"],
+          ],
+          opDraft.op,
+          (v) => {
+            opDraft.op = v;
+            if (!opTaxTouched) opDraft.taxed = advanced.opTaxDefault(opDraft);
+            renderOpDlg();
+          },
+        ),
+      ),
+      h(
+        "div",
+        { class: "field" },
+        h("label", {}, "Nombre (opcional)"),
+        h("input", {
+          type: "text",
+          maxlength: 40,
+          placeholder: advanced.opAutoChartLabel(opDraft),
+          value: opDraft.name || "",
+          "data-op": "name",
+          "aria-label": "Nombre de la operación",
+        }),
+      ),
+      opDraft.op === "sell" || opDraft.op === "move"
+        ? h(
+            "div",
+            { class: "field" },
+            h(
+              "label",
+              {},
+              opDraft.op === "sell" ? "Fondo / ETF a vender" : "Desde (origen)",
+            ),
+            h(
+              "div",
+              { class: "op-row" },
+              fundSelect("fromFund", opDraft.fromFund),
+              opKindToggle("from", opDraft.fromFund, opDraft.fromKind),
+            ),
+          )
+        : null,
+      opDraft.op === "buy" || opDraft.op === "move"
+        ? h(
+            "div",
+            { class: "field" },
+            h(
+              "label",
+              {},
+              opDraft.op === "buy"
+                ? "Fondo / ETF a comprar"
+                : "Hacia (destino)",
+            ),
+            h(
+              "div",
+              { class: "op-row" },
+              fundSelect("toFund", opDraft.toFund),
+              opKindToggle("to", opDraft.toFund, opDraft.toKind),
+            ),
+            provSel
+              ? h(
+                  "div",
+                  { class: "op-prov-row" },
+                  h("span", { class: "muted" }, "Gestor:"),
+                  provSel,
+                )
+              : null,
+          )
+        : null,
+      h(
+        "div",
+        { class: "field" },
+        h(
+          "label",
+          {},
+          "Cantidad",
+          segBtns(
+            [
+              ["pct", "%"],
+              ["eur", "€"],
+            ],
+            opDraft.amountMode,
+            (v) => {
+              if (opDraft.amountMode === v) return;
+              const curAvail = opAvailInSnap(snap, opDraft);
+              if (v === "eur") {
+                opDraft.amount =
+                  curAvail > 0
+                    ? Math.round(
+                        curAvail * (clamp(opDraft.amount, 0, 100) / 100),
+                      )
+                    : 10000;
+              } else {
+                opDraft.amount =
+                  curAvail > 0
+                    ? round(clamp((opDraft.amount / curAvail) * 100, 0, 100), 1)
+                    : 100;
+              }
+              opDraft.amountMode = v;
+              renderOpDlg();
+            },
+          ),
+        ),
+        isPct
+          ? h(
+              "div",
+              { class: "pair" },
+              h("input", {
+                type: "range",
+                min: 0,
+                max: 100,
+                step: 1,
+                value: clamp(opDraft.amount, 0, 100),
+                "data-op": "amountRange",
+              }),
+              h("input", {
+                type: "number",
+                min: 0,
+                max: 100,
+                step: "any",
+                inputmode: "decimal",
+                value: round(opDraft.amount, 1),
+                "data-op": "amountNum",
+              }),
+              h("span", { class: "suf" }, "%"),
+            )
+          : h(
+              "div",
+              { class: "pair" },
+              h("input", {
+                type: "number",
+                class: "op-eur-inp",
+                min: 0,
+                step: 100,
+                inputmode: "decimal",
+                value: Math.round(opDraft.amount),
+                "data-op": "amountNum",
+              }),
+              h("span", { class: "suf" }, "€"),
+              avail > 0.5
+                ? h(
+                    "button",
+                    {
+                      type: "button",
+                      class: "btn ghost op-max-btn",
+                      "data-opa": "max",
+                    },
+                    `Máx. (${eur.format(avail)})`,
+                  )
+                : null,
+            ),
+        h("small", { class: "muted", id: "op-amt-preview" }),
+      ),
+      opDraft.op !== "buy"
+        ? h(
+            "label",
+            { class: "check" },
+            h("input", {
+              type: "checkbox",
+              "data-op": "taxed",
+              checked: opDraft.taxed ? "" : null,
+            }),
+            "Se pagan impuestos por la ganancia en esta operación",
+          )
+        : null,
+      h("p", { class: "note" }, taxNote),
+      h(
+        "div",
+        { class: "tax-row dlg-btns op-btns" },
+        opEditId
+          ? h(
+              "button",
+              {
+                type: "button",
+                class: "btn ghost op-del-btn",
+                "data-opa": "del",
+              },
+              "🗑️ Eliminar",
+            )
+          : null,
+        h(
+          "span",
+          { class: "op-btns-r" },
+          h(
+            "button",
+            { type: "button", class: "btn ghost", "data-opa": "cancel" },
+            "Cancelar",
+          ),
+          h(
+            "button",
+            { type: "button", class: "btn", "data-opa": "save" },
+            opEditId ? "Guardar" : "Añadir operación",
+          ),
+        ),
+      ),
+    );
+    updateOpPreviewText();
+  }
+
+  function initOpDlg() {
+    const dlg = $("#op-dlg"),
+      body = $("#op-body");
+    $("#op-close").addEventListener("click", () => dlg.close());
+    dlg.addEventListener("click", (e) => {
+      if (e.target === dlg) dlg.close();
+    });
+    body.addEventListener("input", (e) => {
+      const el = e.target,
+        k = el.dataset.op;
+      if (!k || !opDraft) return;
+      if (k === "name") {
+        opDraft.name = el.value;
+        return;
+      }
+      if (k === "amountRange" || k === "amountNum") {
+        const v = parseFloat(el.value);
+        if (!Number.isFinite(v)) return;
+        opDraft.amount =
+          opDraft.amountMode === "pct"
+            ? clamp(v, 0, 100)
+            : clamp(v, 0, 1e9);
+        const other =
+          k === "amountRange"
+            ? $('[data-op="amountNum"]', body)
+            : $('[data-op="amountRange"]', body);
+        if (other && document.activeElement !== other)
+          other.value = opDraft.amount;
+        updateOpPreviewText();
+      } else if (k === "taxed") {
+        opDraft.taxed = el.checked;
+        opTaxTouched = true;
+      }
+    });
+    body.addEventListener("change", (e) => {
+      const el = e.target,
+        k = el.dataset.op;
+      if (!k || !opDraft) return;
+      if (k === "fromFund") {
+        opDraft.fromFund = el.value;
+        const snap = opSnapNow();
+        const match = (snap.holdings || []).find((x) => x.fundId === el.value);
+        opDraft.fromKind =
+          match?.kind || advanced.defaultKindOfFund(el.value);
+        if (!opTaxTouched) opDraft.taxed = advanced.opTaxDefault(opDraft);
+        renderOpDlg();
+      } else if (k === "toFund") {
+        opDraft.toFund = el.value;
+        opDraft.toKind = advanced.defaultKindOfFund(el.value);
+        opDraft.toProv = advanced.defaultProvOfFund(el.value, opDraft.toKind);
+        if (!opTaxTouched) opDraft.taxed = advanced.opTaxDefault(opDraft);
+        renderOpDlg();
+      } else if (k === "toProv") {
+        opDraft.toProv = el.value;
+        updateOpPreviewText();
+      }
+    });
+    body.addEventListener("click", (e) => {
+      const b = e.target.closest("[data-opa]");
+      if (!b || !opDraft) return;
+      const a = b.dataset.opa;
+      if (a === "cancel") dlg.close();
+      else if (a === "max") {
+        const avail = opAvailInSnap(opSnapNow(), opDraft);
+        opDraft.amount = Math.round(avail);
+        const inp = $('[data-op="amountNum"]', body);
+        if (inp) inp.value = opDraft.amount;
+        updateOpPreviewText();
+      } else if (a === "del" && opEditId) {
+        advanced.removeOp(state, opDlgGroup, opEditId);
+        dlg.close();
+        refresh();
+      } else if (a === "save") {
+        if (opEditId) advanced.updateOp(state, opDlgGroup, opEditId, opDraft);
+        else advanced.addOp(state, opDlgGroup, opDraft);
+        dlg.close();
+        refresh();
+      }
+    });
+  }
+
   /* ---------- Distribución de cada fondo (empresas y países) ---------- */
   function openDistDialog(id) {
     const f = config.FUNDS.find((x) => x.id === id);
@@ -2283,7 +2955,8 @@
     const srcId = f.custom ? f.mimic?.fund || null : f.id;
     const dist = srcId ? App.fundDistributions?.funds?.[srcId] : null;
     if (!dist) {
-      body.replaceChildren(
+      setKids(
+        body,
         h(
           "p",
           { class: "note" },
@@ -2353,7 +3026,8 @@
         `Datos orientativos de referencia (${App.fundDistributions.updated}).`,
       );
 
-    body.replaceChildren(
+    setKids(
+      body,
       notes.length ? h("p", { class: "note" }, notes.join(" ")) : null,
       h(
         "div",
@@ -2454,12 +3128,20 @@
     next.prov = rename(next.prov);
     next.customFunds = [...mine, ...add];
     if (next.advanced) {
-      for (const ph of [
+      for (const item of [
         ...(next.advanced.invest || []),
         ...(next.advanced.spend || []),
       ]) {
-        ph.alloc = rename(ph.alloc || {});
-        ph.prov = rename(ph.prov || {});
+        if (advanced.isOp(item)) {
+          if (remap[item.fromFund]) item.fromFund = remap[item.fromFund];
+          if (remap[item.toFund]) {
+            item.toFund = remap[item.toFund];
+            if (remap[item.toProv]) item.toProv = remap[item.toProv];
+          }
+        } else {
+          item.alloc = rename(item.alloc || {});
+          item.prov = rename(item.prov || {});
+        }
       }
     }
 
@@ -2913,9 +3595,7 @@
       (fundEditId
         ? "Editar fondo personalizado"
         : "Añadir fondo personalizado") + ` · paso ${draftStep} de 2`;
-    $("#fund-body").replaceChildren(
-      draftStep === 1 ? fundStepOne() : fundStepTwo(),
-    );
+    setKids($("#fund-body"), draftStep === 1 ? fundStepOne() : fundStepTwo());
   }
 
   const segBtns = (opts, cur, pick) =>
@@ -3354,15 +4034,28 @@
     state.favs = state.favs.filter((x) => x !== id);
     if (!Object.keys(state.alloc).length)
       state.alloc = { ...config.DEFAULT_STATE.alloc };
+    const fbId = config.FUNDS[0]?.id || "VT";
     if (state.advanced) {
-      for (const ph of [
+      for (const item of [
         ...(state.advanced.invest || []),
         ...(state.advanced.spend || []),
       ]) {
-        delete ph.alloc?.[id];
-        delete ph.prov?.[id];
-        if (!Object.keys(ph.alloc || {}).length)
-          ph.alloc = { ...config.DEFAULT_STATE.alloc };
+        if (advanced.isOp(item)) {
+          if (item.fromFund === id) {
+            item.fromFund = fbId;
+            item.fromKind = advanced.defaultKindOfFund(fbId);
+          }
+          if (item.toFund === id) {
+            item.toFund = fbId;
+            item.toKind = advanced.defaultKindOfFund(fbId);
+            item.toProv = advanced.defaultProvOfFund(fbId, item.toKind);
+          }
+        } else {
+          delete item.alloc?.[id];
+          delete item.prov?.[id];
+          if (!Object.keys(item.alloc || {}).length)
+            item.alloc = { ...config.DEFAULT_STATE.alloc };
+        }
       }
     }
     refresh();
@@ -3539,6 +4232,7 @@
     initTax();
     initFundDlg();
     initDistDlg();
+    initOpDlg();
     // Mientras un slider está pulsado no se calcula lo pesado (riesgo y estrategias), aunque pares un momento: se hace al soltarlo
     document.addEventListener(
       "pointerdown",
