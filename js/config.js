@@ -217,6 +217,13 @@
 
   const DEFAULT_STATE = {
     period: "month",
+    advancedMode: false, // planificación por tramos temporales (ver advancedMode.js)
+    advanced: {
+      activeGroup: "invest",
+      activeId: null,
+      invest: [],
+      spend: [],
+    },
     net: 1800,
     needs: 900,
     leisure: 270,
@@ -247,7 +254,7 @@
     customFunds: [], // fondos personalizados (ver customFunds.js)
     favs: [], // fondos marcados como favoritos (ver el switch «Ver solo favoritos y activos»); no se exportan
     onlyFav: false, // ver solo favoritos y activos (el resto va a una lista oculta)
-    fundCfg: {}, // por fondo del catálogo: { kind: 'etf'|'index', perYear, pct, taxed } (tipo y movimientos entre fondos)
+    fundCfg: {}, // por fondo del catálogo: { kind: 'etf'|'index', moveMode, perYear, totalMoves, pct, taxed } (tipo y movimientos entre fondos)
     tax: { country: "ES", scale: null, custom: null }, // impuestos de la jubilación: país (data/tax-data.js) o 'CUSTOM' con tramos propios
   };
 

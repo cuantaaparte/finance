@@ -54,14 +54,40 @@
 
   /** Convierte un supuesto {name, state} en un código de una sola línea. */
   function encode(sc) {
-    const used = sc.state.alloc || {},
-      state = {
-        ...sc.state,
-        customFunds: (sc.state.customFunds || []).filter((d) => d.id in used), // solo viajan los fondos personalizados marcados, aunque estén al 0 %
-        fundCfg: Object.fromEntries(
-          Object.entries(sc.state.fundCfg || {}).filter(([id]) => id in used),
-        ),
-      }; // y la configuración de los fondos marcados
+    const src = sc.state || {},
+      rootAlloc = src.alloc || {},
+      usedIds = new Set(Object.keys(rootAlloc));
+
+    let adv = null;
+    if (src.advancedMode && isObj(src.advanced)) {
+      const compactList = (list) =>
+        (Array.isArray(list) ? list : []).map((ph) => {
+          const phAlloc = ph.alloc || {};
+          Object.keys(phAlloc).forEach((id) => usedIds.add(id));
+          return {
+            ...ph,
+            fundCfg: Object.fromEntries(
+              Object.entries(ph.fundCfg || {}).filter(([id]) => id in phAlloc),
+            ),
+          };
+        });
+      adv = {
+        activeGroup: src.advanced.activeGroup === "spend" ? "spend" : "invest",
+        activeId: src.advanced.activeId ?? null,
+        invest: compactList(src.advanced.invest),
+        spend: compactList(src.advanced.spend),
+      };
+    }
+
+    const state = {
+      ...src,
+      customFunds: (src.customFunds || []).filter((d) => usedIds.has(d.id)), // viajan los fondos personalizados usados en la cartera o en algún tramo
+      fundCfg: Object.fromEntries(
+        Object.entries(src.fundCfg || {}).filter(([id]) => id in rootAlloc),
+      ),
+    }; // y la configuración de los fondos marcados
+    if (adv) state.advanced = adv;
+    else delete state.advanced; // en modo estándar no se añade payload innecesario
     delete state.favs;
     delete state.onlyFav; // los favoritos son una preferencia de vista, no parte del supuesto
     const data = toB64(
@@ -125,8 +151,8 @@
         out.customFunds = App.customFunds.clean(src.customFunds); // fondos personalizados
       else if (k === "tax")
         out.tax = App.taxes.clean(src.tax); // país o tramos personalizados (se validan en taxes.js)
-      else if (k === "alloc" || k === "prov")
-        continue; // se tratan después
+      else if (k === "alloc" || k === "prov" || k === "advanced")
+        continue; // se tratan después, una vez conocidos los fondos válidos
       else if (typeof d === "boolean") out[k] = typeof v === "boolean" ? v : d;
       else if (typeof d === "number") {
         const [lo, hi] = LIMITS[k] || [-1e9, 1e9];
@@ -153,7 +179,17 @@
         if (typeof p === "string" && f.providers.some((x) => x.id === p))
           out.prov[f.id] = p;
       });
-    return finance.normalize(out);
+    // Modo Avanzado: valida cada tramo con los fondos e impuestos reconocidos.
+    if (App.advanced) {
+      out.advanced = App.advanced.clean(src.advanced, out, funds);
+      if (out.advancedMode) {
+        App.advanced.ensure(out);
+        App.advanced.syncToState(out);
+      }
+    }
+    finance.normalize(out);
+    if (out.advancedMode && App.advanced) App.advanced.syncFromState(out);
+    return out;
   }
 
   /** Lee un código (aunque venga con espacios, saltos de línea o texto alrededor) y devuelve {name, state}. Lanza Error con un mensaje en español. */

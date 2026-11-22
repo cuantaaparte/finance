@@ -1,4 +1,4 @@
-/* Gráfica en <canvas> sin librerías: dos fases (trabajo / jubilación), línea vertical y tooltip. */
+/* Gráfica en <canvas> sin librerías: dos fases (trabajo / jubilación), tramos del Modo Avanzado, línea vertical y tooltip. */
 (function (App) {
   "use strict";
   const C = {
@@ -11,6 +11,12 @@
     nomDown: "#fb923c",
     grid: "rgba(255,255,255,.08)",
     text: "#8b97a9",
+    advInvest: "#2dd4bf",
+    advInvestFill: "rgba(45, 212, 191, 0.08)",
+    advInvestLine: "rgba(45, 212, 191, 0.5)",
+    advSpend: "#fb923c",
+    advSpendFill: "rgba(251, 146, 60, 0.08)",
+    advSpendLine: "rgba(251, 146, 60, 0.5)",
   };
   const PAD = { l: 58, r: 14, t: 18, b: 28 },
     BASE = { ...PAD };
@@ -34,6 +40,19 @@
   function niceMax(v) {
     const p = Math.pow(10, Math.floor(Math.log10(v)));
     return ([1, 2, 2.5, 5, 10].find((x) => v / p <= x - 1e-9) || 10) * p; // el margen evita que 10,000000000000002 deje la escala sin valor (NaN)
+  }
+
+  /** Devuelve el tramo del Modo Avanzado al que corresponde el año `y` (null en modo estándar). */
+  function phaseAt(res, y) {
+    const trs = res.transitions;
+    if (!trs?.length) return null;
+    if (y <= 0) return trs[0];
+    const grp = y <= res.work ? "invest" : "spend";
+    let found = null;
+    for (const tr of trs) {
+      if (tr.group === grp && tr.year < y) found = tr;
+    }
+    return found || trs.find((tr) => tr.group === grp) || null;
   }
 
   function init(c, t) {
@@ -99,8 +118,24 @@
     if (s.showPrice) vals.push(...res.price.filter((v) => v != null));
     if (s.showNominal) vals.push(...res.nominal.slice(res.work));
     const top = niceMax(Math.max(...vals, 1));
-    const X = (y) => PAD.l + (y / res.years) * iw,
+    const spanY = Math.max(1, res.years);
+    const X = (y) => PAD.l + (y / spanY) * iw,
       Y = (v) => PAD.t + ih - (v / top) * ih;
+
+    // Banda sombreada del tramo activo en Modo Avanzado (detrás de la rejilla y las líneas)
+    const trs = s.advancedMode && res.transitions?.length ? res.transitions : null;
+    const activeId = s.advancedMode ? s.advanced?.activeId : null;
+    if (trs && activeId) {
+      for (let i = 0; i < trs.length; i++) {
+        const tr = trs[i];
+        if (tr.id !== activeId) continue;
+        const x1 = X(tr.year),
+          x2 = X(i + 1 < trs.length ? trs[i + 1].year : res.years);
+        ctx.fillStyle =
+          tr.group === "spend" ? C.advSpendFill : C.advInvestFill;
+        ctx.fillRect(x1, PAD.t, Math.max(0, x2 - x1), ih);
+      }
+    }
 
     ctx.font = `${11 * k}px system-ui`;
     ctx.fillStyle = C.text;
@@ -121,6 +156,39 @@
     const step = res.years > 40 ? 10 : res.years > 20 ? 5 : 2;
     for (let y = 0; y <= res.years; y += step)
       ctx.fillText(y, X(y), h - PAD.b + 8);
+
+    // Líneas punteadas y etiquetas de cada tramo en Modo Avanzado
+    if (trs) {
+      for (let i = 0; i < trs.length; i++) {
+        const tr = trs[i],
+          isSpend = tr.group === "spend",
+          isAct = tr.id === activeId;
+        const nextY = i + 1 < trs.length ? trs[i + 1].year : res.years;
+        if (tr.year > 0 && tr.year < res.years && tr.year !== res.work) {
+          ctx.setLineDash([4, 4]);
+          ctx.strokeStyle = isSpend ? C.advSpendLine : C.advInvestLine;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(X(tr.year), PAD.t);
+          ctx.lineTo(X(tr.year), PAD.t + ih);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+        const x1 = X(tr.year),
+          x2 = X(nextY);
+        if (x2 - x1 >= 18 * k) {
+          ctx.save();
+          ctx.font = `${isAct ? "700 " : "600 "}${10 * k}px system-ui`;
+          ctx.fillStyle = isSpend ? C.advSpend : C.advInvest;
+          ctx.globalAlpha = isAct ? 0.95 : 0.55;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "top";
+          ctx.fillText(tr.label, (x1 + x2) / 2, PAD.t + 4 * k);
+          ctx.restore();
+        }
+      }
+      ctx.font = `${11 * k}px system-ui`;
+    }
 
     const line = (arr, a, b, color) => {
       ctx.beginPath();
@@ -200,7 +268,11 @@
       return;
     } // mismo año: solo se mueve el cuadro, sin repintar ni recomponer el texto
     hover = y;
-    const lines = [`Año ${y} · ${y <= res.work ? "trabajando" : "jubilado"}`];
+    const ph = s.advancedMode ? phaseAt(res, y) : null;
+    const phaseTag = ph ? ` · tramo ${ph.label}` : "";
+    const lines = [
+      `Año ${y} · ${y <= res.work ? "trabajando" : "jubilado"}${phaseTag}`,
+    ];
     if (y <= res.work)
       lines.push(
         `Invertido: ${eur.format(res.invested[y])}`,

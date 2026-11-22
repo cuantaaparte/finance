@@ -10,6 +10,7 @@
     scenarioCode,
     taxes,
     customFunds,
+    advanced,
   } = App;
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -31,8 +32,11 @@
     "retNeeds",
     "retLeisure",
   ]);
+  const DESKTOP_MQ = window.matchMedia(
+    "(min-width: 1100px) and (min-height: 640px)",
+  );
 
-  const state = scenarioCode.clean(storage.get(config.STORAGE.settings, {})); // lo guardado pasa por la misma validación que un supuesto importado (valores por defecto, rangos, fondos, impuestos…)
+  const state = scenarioCode.clean(storage.get(config.STORAGE.settings, {})); // lo guardado pasa por la misma validación que un supuesto importado (valores por defecto, rangos, fondos, impuestos, tramos…)
   let base = null; // últimos datos introducidos por el usuario: de aquí salen las estrategias
   let active = null; // estrategia aplicada actualmente
   let scenarios = storage.get(config.STORAGE.scenarios, []);
@@ -43,6 +47,7 @@
   let dragging = false,
     heavyPending = false; // slider pulsado / lo pesado está pendiente
   let lastRes = null; // última simulación: de aquí salen el bruto del primer año de jubilación y la parte que es ganancia
+  let advPanels = null; // recuadros de línea de tiempo (Invertir / Gastar) del Modo Avanzado
   // Ajustes de VISTA que una estrategia no debe pisar (antes, al aplicar una, volvía a "Salario medio" porque la copia guardaba el valor antiguo).
   const VIEW_KEYS = [
     "stratBase",
@@ -62,6 +67,7 @@
       [...VIEW_KEYS, "customFunds"].map((k) => [k, state[k]]),
     );
     Object.assign(state, structuredClone(next), keep);
+    state.advancedMode = false;
     state.retGross = null;
   };
   const factor = () => (state.period === "year" ? 12 : 1);
@@ -82,13 +88,35 @@
   }
   const rateOf = (f) => data.cagr(f, histRange());
   // Datos del riesgo: todo el histórico disponible (mín. 20 años, para que una ventana corta no oculte las grandes caídas) e inflación de los últimos 30 años
-  const inputsOf = (s) => ({
-    market: data.portfolioStats(
-      s.alloc,
-      Math.max(Math.ceil(histRange(s).years), 20),
-    ),
-    infl: data.inflationStats(30),
-  });
+  const inputsOf = (s) => {
+    const histY = Math.max(Math.ceil(histRange(s).years), 20);
+    const infl = data.inflationStats(30);
+    if (
+      s.advancedMode &&
+      s.advanced?.invest?.length &&
+      s.advanced?.spend?.length
+    ) {
+      const phaseMarkets = {};
+      const fundMarkets = {};
+      for (const ph of [...s.advanced.invest, ...s.advanced.spend]) {
+        phaseMarkets[ph.id] = data.portfolioStats(ph.alloc, histY);
+        for (const id of Object.keys(ph.alloc || {})) {
+          if (!(id in fundMarkets))
+            fundMarkets[id] = data.portfolioStats({ [id]: 100 }, histY);
+        }
+      }
+      return {
+        market: data.portfolioStats(s.alloc, histY),
+        phaseMarkets,
+        fundMarkets,
+        infl,
+      };
+    }
+    return {
+      market: data.portfolioStats(s.alloc, histY),
+      infl,
+    };
+  };
   const MESES = [
     "ene",
     "feb",
@@ -231,12 +259,12 @@
           h("div", {
             id: "ret-l1",
             title:
-              "Primer año de jubilación. Los años siguientes cambia según cuánta ganancia haya en el capital.",
+              "Primer año del tramo de jubilación. Los años siguientes cambia según cuánta ganancia haya en el capital.",
           }),
           h("div", {
             id: "ret-l2",
             title:
-              "Mismo importe sin descontar la inflación: lo que verías en tu cuenta el primer año de jubilación.",
+              "Mismo importe sin descontar la inflación: lo que verías en tu cuenta al inicio de este tramo.",
           }),
         ),
         h(
@@ -537,6 +565,7 @@
         if (cm) {
           setOpts(f, { moveMode: e.target.checked ? "total" : "year" });
           if (!optsOf(f).taxed) {
+            if (state.advancedMode) advanced.syncFromState(state);
             updateFundPanel(e.target.closest(".fund"), f, false);
             scheduleSave();
             return;
@@ -552,11 +581,17 @@
         const v = parseFloat(e.target.value) || 0;
         if (cy) {
           const isTotal = optsOf(f).moveMode === "total";
-          setOpts(f, isTotal ? { totalMoves: Math.round(v) } : { perYear: Math.round(v) });
+          setOpts(
+            f,
+            isTotal
+              ? { totalMoves: Math.round(v) }
+              : { perYear: Math.round(v) },
+          );
         } else {
           setOpts(f, { pct: v });
         }
         if (!optsOf(f).taxed) {
+          if (state.advancedMode) advanced.syncFromState(state);
           updateFundPanel(e.target.closest(".fund"), f, false);
           scheduleSave();
           return;
@@ -607,7 +642,103 @@
     return box;
   }
 
+  /** Coloca los recuadros del Modo Avanzado en el contenedor correcto según el tamaño de pantalla:
+   *  - En PC: fijos en la parte superior de la columna izquierda (#col-a).
+   *  - En móvil / vertical: dentro de #zone, fijos justo debajo de la gráfica. */
+  function placeAdvPanels() {
+    if (!advPanels) return;
+    if (DESKTOP_MQ.matches) {
+      const colA = $("#col-a");
+      if (colA && colA.firstElementChild !== advPanels) colA.prepend(advPanels);
+    } else {
+      const zone = $("#zone");
+      if (zone && zone.lastElementChild !== advPanels) zone.append(advPanels);
+    }
+  }
+
+  /** Actualiza la etiqueta del tramo en la gráfica sin recalcular simulaciones mientras escribes. */
+  function syncChartLabel(phaseId, label) {
+    if (!lastRes?.transitions) return;
+    const tr = lastRes.transitions.find((x) => x.id === phaseId);
+    if (!tr) return;
+    tr.label = label;
+    chart.render(lastRes, state);
+  }
+
+  /** Crea y monta los paneles de línea de tiempo del Modo Avanzado. */
+  function ensureAdvPanels() {
+    if (!advanced) return null;
+    if (!advPanels) {
+      advPanels = advanced.buildPanels({
+        onAdd: (group) => {
+          advanced.addPhase(state, group);
+          refresh();
+        },
+        onSelect: (group, id) => {
+          advanced.selectPhase(state, group, id);
+          refresh(false);
+        },
+        onDelete: (group) => {
+          const cur = advanced.getActive(state);
+          if (
+            cur.group === group &&
+            advanced.removePhase(state, group, cur.phase.id)
+          ) {
+            refresh();
+          }
+        },
+        onYears: (group, v) => {
+          const meta = advanced.GROUP_META[group];
+          if (
+            document.activeElement?.dataset?.advYearsNum === group &&
+            v < meta.minYears
+          )
+            return; // permite escribir números de 2 cifras sin recortar al primer dígito
+          advanced.setActiveYears(state, v);
+          refresh();
+        },
+        onYearsCommit: () => refresh(false),
+        onRename: (group, val) => {
+          const cur = advanced.getActive(state);
+          if (cur.group !== group) return;
+          advanced.renamePhase(state, group, cur.phase.id, val);
+          advanced.renderPanels(advPanels, state);
+          syncChartLabel(
+            cur.phase.id,
+            String(cur.phase.label || "").trim() || String(cur.index + 1),
+          );
+          scheduleSave();
+        },
+        onRenameCommit: (group) => {
+          const cur = advanced.getActive(state);
+          if (cur.group !== group) return;
+          const cleaned = advanced.cleanLabel(
+            cur.phase.label,
+            String(cur.index + 1),
+          );
+          advanced.renamePhase(state, group, cur.phase.id, cleaned);
+          advanced.renderPanels(advPanels, state);
+          syncChartLabel(cur.phase.id, cleaned);
+          scheduleSave();
+        },
+        onReorder: (group, fromIdx, toIdx) => {
+          if (advanced.reorderPhase(state, group, fromIdx, toIdx)) refresh();
+        },
+      });
+      advPanels.addEventListener("focusout", (e) => {
+        const g = e.target.dataset?.advYearsNum;
+        if (!g) return;
+        const v = parseFloat(e.target.value);
+        if (Number.isFinite(v)) advanced.setActiveYears(state, v);
+        refresh(false);
+      });
+    }
+    placeAdvPanels();
+    return advPanels;
+  }
+
   function buildInputs() {
+    ensureAdvPanels();
     config.SECTIONS.forEach((sec) => {
       const card = h(
         "div",
@@ -619,6 +750,7 @@
       if (sec.custom === "funds") card.append(buildFunds());
       $("#col-" + sec.col).append(card);
     });
+    placeAdvPanels();
   }
 
   /* ---------- Estado ← eventos ---------- */
@@ -626,6 +758,20 @@
     const isCheck = el.type === "checkbox",
       v = isCheck ? el.checked : parseFloat(el.value);
     if (!isCheck && !Number.isFinite(v)) return;
+    if (key === "advancedMode") {
+      if (v) {
+        state.advancedMode = true;
+        advanced.ensure(state);
+        advanced.syncToState(state);
+        const colA = $("#col-a");
+        if (colA) colA.scrollTop = 0;
+      } else {
+        advanced.syncFromState(state);
+        state.advancedMode = false;
+      }
+      refresh(true);
+      return;
+    }
     if (key === "periodYearly") state.period = v ? "year" : "month";
     else if (key in PCT) {
       state[PCT[key]] = (state.net * v) / 100;
@@ -711,7 +857,7 @@
     if (key in RET_PCT)
       return retIncome() > 0 ? (state[RET_PCT[key]] / retIncome()) * 100 : 0;
     if (key === "retIncome" && state.retBasis === "gross" && lastRes)
-      return lastRes.spend * factor(); // bruto del primer año de jubilación
+      return lastRes.spend * factor(); // bruto del primer año del tramo de jubilación
     return MONEY.has(key) ? valueOf(key) * factor() : state[key];
   }
 
@@ -731,6 +877,7 @@
   /** userEdit = true: el usuario cambió algo → esos datos pasan a ser la base de las estrategias. */
   function refresh(userEdit = true) {
     finance.normalize(state);
+    if (state.advancedMode) advanced.syncFromState(state);
     if (userEdit) {
       baseStale = true;
       active = null;
@@ -769,6 +916,52 @@
     customFunds.sync(state.customFunds, rateOf);
   }
 
+  /** Actualiza visibilidad condicional de secciones, paneles de línea de tiempo, título de fondos y color vinculado de sliders en Modo Avanzado. */
+  function renderAdvanced() {
+    const on = !!state.advancedMode;
+    document.body.classList.toggle("tl-active", on);
+    const panels = ensureAdvPanels();
+    const info = on ? advanced.getActive(state) : null;
+    const group = info ? info.group : null;
+    advanced.renderPanels(panels, state);
+
+    const show = (sel, vis) => {
+      const el = $(sel);
+      if (el && el.hidden !== !vis) el.hidden = !vis;
+    };
+    show(".sec-income", !on || group === "invest");
+    show(".sec-invest", !on || group === "invest");
+    show(".sec-plan", !on || group === "invest");
+    show(".sec-retire", !on || group === "spend");
+    show(".sec-funds", true);
+
+    const fundsH2 = $(".sec-funds > h2");
+    if (fundsH2) {
+      setText(
+        fundsH2,
+        on && group === "spend"
+          ? "Fondos y comisiones a retirar"
+          : "Fondos y comisiones",
+      );
+    }
+
+    const wyField = $('.field[data-field="workYears"]');
+    if (wyField)
+      wyField.classList.toggle("adv-sync-invest", on && group === "invest");
+    const ryField = $('.field[data-field="retireYears"]');
+    if (ryField)
+      ryField.classList.toggle("adv-sync-spend", on && group === "spend");
+
+    const initLbl = $('.field[data-field="initial"] > label');
+    if (initLbl) {
+      const want =
+        on && group === "invest" && info.index > 0
+          ? "Aportación puntual al inicio del tramo"
+          : "Inversión inicial";
+      setText(initLbl, want);
+    }
+  }
+
   function render() {
     syncCustom();
     const port = finance.portfolio(state, rateOf);
@@ -780,7 +973,8 @@
         const net = netFromGross(state.retGross, res.q0);
         if (Math.abs(net - retIncome()) > 1e-6) {
           setRetIncome(net);
-          res = finance.simulate(state, port);
+          if (state.advancedMode) advanced.syncFromState(state);
+          res = finance.simulate(state, finance.portfolio(state, rateOf));
         }
       }
     }
@@ -821,6 +1015,7 @@
     });
     $("#hint-nominal").hidden = !state.showNominal;
     $(".legend").classList.toggle("nominal-on", !!state.showNominal);
+    renderAdvanced();
     renderHist();
     renderFunds();
     renderExtremes();
@@ -850,7 +1045,16 @@
   function histWarning() {
     if (data.status().mode === "none")
       return "Sin datos reales: la rentabilidad es una estimación fija y no cambia con los años.";
-    const selected = Object.keys(state.alloc)
+    const idSet = new Set(Object.keys(state.alloc));
+    if (state.advancedMode && state.advanced) {
+      for (const ph of [
+        ...(state.advanced.invest || []),
+        ...(state.advanced.spend || []),
+      ]) {
+        Object.keys(ph.alloc || {}).forEach((id) => idSet.add(id));
+      }
+    }
+    const selected = [...idSet]
       .map((id) => config.FUNDS.find((x) => x.id === id))
       .filter((f) => f && (!f.custom || f.mimic)); // un personalizado que imita a otro hereda su histórico
     const partial = selected
@@ -869,6 +1073,9 @@
       sig = JSON.stringify([
         state.histFrom,
         state.histTo,
+        state.advancedMode,
+        state.advanced?.activeGroup,
+        state.advanced?.activeId,
         Object.keys(state.alloc),
         state.customFunds.map((d) => d.mimic?.fund || ""),
         st.mode,
@@ -909,6 +1116,9 @@
     // Solo se repinta si cambió algo que afecta a los fondos (mover el sueldo o los años no los toca)
     const st = data.status(),
       sig = JSON.stringify([
+        state.advancedMode,
+        state.advanced?.activeGroup,
+        state.advanced?.activeId,
         state.alloc,
         state.prov,
         state.customFunds,
@@ -1171,6 +1381,8 @@
   }
 
   const STRAT_KEYS = [
+    "advancedMode",
+    "advanced",
     "net",
     "needs",
     "leisure",
@@ -1255,7 +1467,7 @@
                 h(
                   "span",
                   { class: st.risk.color ? "risk-" + st.risk.color : "" },
-                  `Riesgo ${st.risk.label} (${st.risk.score}/100)`,
+                  `Riesgo ${st.risk.level} (${st.risk.score}/100)`,
                 ),
               ),
         ),
@@ -1369,6 +1581,15 @@
       const s = sc.state,
         m = s.period === "year" ? 12 : 1,
         u = s.period === "year" ? "/año" : "/mes";
+      if (
+        s.advancedMode &&
+        s.advanced?.invest?.length &&
+        s.advanced?.spend?.length
+      ) {
+        const wY = s.advanced.invest.reduce((a, x) => a + (x.years || 0), 0);
+        const rY = s.advanced.spend.reduce((a, x) => a + (x.years || 0), 0);
+        return `⚡ Modo Avanzado · ${s.advanced.invest.length} tramo(s) invertir (${wY} años) · ${s.advanced.spend.length} tramo(s) gastar (${rY} años) · inicial ${eur.format(s.advanced.invest[0].initial || 0)}`;
+      }
       return (
         `Neto ${eur.format(s.net * m)}${u} · invierte ${eur.format(s.invest * m)}${u} · inicial ${eur.format(s.initial)} · ${s.workYears} años · inflación ${s.inflation} % · histórico ${s.histFrom || s.histTo ? `${s.histFrom ?? "…"}–${s.histTo ?? "hoy"}` : "por defecto"} · bróker ${s.brokerFee} % · impuestos ${taxes.label(s.tax)} · ` +
         Object.entries(s.alloc)
@@ -1507,13 +1728,21 @@
     }
     return syms.get(cur);
   };
-  const nomFactor = () => Math.pow(1 + state.inflation / 100, state.workYears); // inflación acumulada hasta jubilarte
+  const nomFactor = (res = lastRes) =>
+    state.advancedMode && res?.activeStartInfl != null
+      ? res.activeStartInfl
+      : Math.pow(1 + state.inflation / 100, state.workYears); // inflación acumulada hasta iniciar el tramo de jubilación
+  const retStartYear = (res = lastRes) =>
+    state.advancedMode && res?.activeStartYear != null
+      ? res.activeStartYear
+      : state.workYears;
 
-  /** Descripción bajo "Ingresos de la inversión": neto, bruto e impuestos del primer año de jubilación, y lo mismo sin ajustar a inflación. */
+  /** Descripción bajo "Ingresos de la inversión": neto, bruto e impuestos del primer año del tramo, y lo mismo sin ajustar a inflación. */
   function renderRetInfo(res) {
     const def = taxes.resolve(state.tax),
       m = factor(),
-      f = nomFactor(),
+      f = nomFactor(res),
+      yr = retStartYear(res),
       per = state.period === "year" ? "/año" : "/mes";
     const v = (x) => eur.format(x * m) + per,
       n = (x) => eur.format(x * m * f) + per,
@@ -1524,7 +1753,7 @@
     );
     setText(
       (dom.l2 ||= $("#ret-l2")),
-      `Sin ajustar a inflación (año ${state.workYears}): neto ${n(res.net)} · bruto ${n(res.spend)}`,
+      `Sin ajustar a inflación (año ${yr}): neto ${n(res.net)} · bruto ${n(res.spend)}`,
     );
   }
 
@@ -1570,6 +1799,7 @@
     const def = taxes.resolve(state.tax),
       cur = def.currency,
       sym = curSym(cur),
+      yr = retStartYear(),
       country = def.custom
         ? null
         : taxes.countries().find((x) => x.id === def.id);
@@ -1723,7 +1953,7 @@
       h(
         "p",
         { class: "note" },
-        `Importes en € de hoy. Los tramos son los de hoy y se supone que se ajustan a la inflación cada año (${infl} %), por eso en la simulación siempre valen lo mismo. La columna «nominal» muestra cuánto valdría cada límite sin ajustar a inflación el primer año de jubilación (año ${state.workYears}).`,
+        `Importes en € de hoy. Los tramos son los de hoy y se supone que se ajustan a la inflación cada año (${infl} %), por eso en la simulación siempre valen lo mismo. La columna «nominal» muestra cuánto valdría cada límite sin ajustar a inflación al inicio de este tramo (año ${yr}).`,
       ),
       !def.custom && def.note
         ? h(
@@ -1748,7 +1978,7 @@
               h("th", {}, "Base imponible hasta"),
               h("th", {}, "Tipo"),
               h("th", {}, "Pagas al año (€ de hoy)"),
-              h("th", {}, `Límite nominal, año ${state.workYears}`),
+              h("th", {}, `Límite nominal, año ${yr}`),
               h("th", {}),
             ),
           ),
@@ -1848,7 +2078,7 @@
       h(
         "h3",
         { class: "tax-h" },
-        "Resultado con tu plan (primer año de jubilación)",
+        "Resultado con tu plan (primer año del tramo)",
       ),
       h(
         "div",
@@ -1873,6 +2103,7 @@
     if (!$("#tax-sum") || !lastRes) return;
     const def = taxes.resolve(state.tax),
       f = nomFactor(),
+      yr = retStartYear(),
       gross = lastRes.spend * 12,
       q = lastRes.q0,
       base = taxes.taxable(def, gross, q),
@@ -1904,7 +2135,7 @@
           h("th", {}, ""),
           h("th", {}, "€ de hoy / año"),
           h("th", {}, "€ de hoy / mes"),
-          h("th", {}, `€ nominales / mes (año ${state.workYears})`),
+          h("th", {}, `€ nominales / mes (año ${yr})`),
         ),
       ),
       h(
@@ -2222,10 +2453,26 @@
     next.alloc = rename(next.alloc);
     next.prov = rename(next.prov);
     next.customFunds = [...mine, ...add];
+    if (next.advanced) {
+      for (const ph of [
+        ...(next.advanced.invest || []),
+        ...(next.advanced.spend || []),
+      ]) {
+        ph.alloc = rename(ph.alloc || {});
+        ph.prov = rename(ph.prov || {});
+      }
+    }
+
     const keep = state.stratBase,
       keepFav = { favs: state.favs, onlyFav: state.onlyFav };
     Object.assign(state, next, keepFav);
     state.stratBase = keep; // los favoritos son tuyos: no cambian al cargar un supuesto
+    if (state.advancedMode) {
+      advanced.ensure(state);
+      advanced.syncToState(state);
+      const colA = $("#col-a");
+      if (colA) colA.scrollTop = 0;
+    }
     refresh();
   }
 
@@ -3107,6 +3354,17 @@
     state.favs = state.favs.filter((x) => x !== id);
     if (!Object.keys(state.alloc).length)
       state.alloc = { ...config.DEFAULT_STATE.alloc };
+    if (state.advanced) {
+      for (const ph of [
+        ...(state.advanced.invest || []),
+        ...(state.advanced.spend || []),
+      ]) {
+        delete ph.alloc?.[id];
+        delete ph.prov?.[id];
+        if (!Object.keys(ph.alloc || {}).length)
+          ph.alloc = { ...config.DEFAULT_STATE.alloc };
+      }
+    }
     refresh();
   }
 
@@ -3237,6 +3495,7 @@
 
   function init() {
     buildInputs();
+    DESKTOP_MQ.addEventListener("change", placeAdvPanels);
     $("#app-version").textContent = config.VERSION
       ? "Versión " + config.VERSION
       : "";
