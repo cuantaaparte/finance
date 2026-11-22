@@ -495,6 +495,19 @@
         refresh();
         return;
       }
+      const cdiv = e.target.dataset.cyield;
+      if (cdiv) {
+        // dividendos editables directamente en el desplegable de los fondos personalizados
+        const v = parseFloat(e.target.value);
+        if (!Number.isFinite(v)) return;
+        const d = state.customFunds.find((x) => x.id === cdiv);
+        if (!d) return;
+        d.vals = d.vals || {};
+        const [lo, hi] = customFunds.LIMITS.yield;
+        d.vals.yield = clamp(v, lo, hi);
+        refresh();
+        return;
+      }
       const c = e.target.dataset.fcheck,
         w = e.target.dataset.fw,
         p = e.target.dataset.fprov,
@@ -538,6 +551,12 @@
       else if (p) state.prov[p] = e.target.value;
       else return;
       refresh();
+    });
+    box.addEventListener("focusout", (e) => {
+      const id = e.target.dataset?.cyield;
+      if (!id) return;
+      const f = config.FUNDS.find((x) => x.id === id);
+      if (f) e.target.value = round(f.yield, 2);
     });
     box.addEventListener("click", (e) => {
       // botones de las filas y lista de fondos ocultos
@@ -2066,13 +2085,18 @@
       );
     }
 
-    const mimBase = f.custom && f.mimic ? config.FUNDS.find((x) => x.id === f.mimic.fund) : null;
+    const mimBase =
+      f.custom && f.mimic
+        ? config.FUNDS.find((x) => x.id === f.mimic.fund)
+        : null;
     const notes = [];
     if (mimBase)
       notes.push(`Distribución heredada del fondo imitado (${mimBase.name}).`);
     if (dist.note) notes.push(dist.note);
     if (App.fundDistributions?.updated)
-      notes.push(`Datos orientativos de referencia (${App.fundDistributions.updated}).`);
+      notes.push(
+        `Datos orientativos de referencia (${App.fundDistributions.updated}).`,
+      );
 
     body.replaceChildren(
       notes.length ? h("p", { class: "note" }, notes.join(" ")) : null,
@@ -2082,7 +2106,13 @@
         h(
           "div",
           { class: "dist-sec" },
-          h("h3", {}, dist.entityLabel ? `Top ${holdings.length} emisores` : `Top ${holdings.length} empresas`),
+          h(
+            "h3",
+            {},
+            dist.entityLabel
+              ? `Top ${holdings.length} emisores`
+              : `Top ${holdings.length} empresas`,
+          ),
           h(
             "div",
             { class: "tbl-wrap" },
@@ -2107,7 +2137,11 @@
         h(
           "div",
           { class: "dist-sec" },
-          h("h3", {}, countries.length > 1 ? `Top ${countries.length} países` : "País"),
+          h(
+            "h3",
+            {},
+            countries.length > 1 ? `Top ${countries.length} países` : "País",
+          ),
           h(
             "div",
             { class: "tbl-wrap" },
@@ -2324,11 +2358,11 @@
         "data-fw": d.id,
       }),
       h("span", { class: "suf" }, "%"),
-      fundPanel({ id: d.id, name: d.name }),
+      fundPanel({ id: d.id, name: d.name, custom: true }),
     );
   }
 
-  /** Panel desplegable de cualquier fondo: tipo (ETF o Fondo), movimientos al año, % que se mueve e impuestos de esos movimientos. */
+  /** Panel desplegable de cualquier fondo: tipo (ETF o Fondo), dividendos, movimientos al año, % que se mueve e impuestos. */
   function fundPanel(f) {
     const name =
       f.name ||
@@ -2348,6 +2382,32 @@
         }),
         h("em", { "data-out": key }),
       );
+    const divBox = f.custom
+      ? h(
+          "span",
+          {
+            class: "cdiv-box editable",
+            title: "Dividendo anual bruto (editable en fondos personalizados)",
+          },
+          h("input", {
+            type: "number",
+            min: 0,
+            max: 30,
+            step: 0.1,
+            inputmode: "decimal",
+            "data-cyield": f.id,
+            "aria-label": "Dividendos (%)",
+          }),
+          h("span", { class: "suf" }, "%"),
+        )
+      : h(
+          "span",
+          {
+            class: "cdiv-box static",
+            title: "Dividendo anual bruto estimado del fondo (valor fijo)",
+          },
+          h("span", { class: "cdiv-val" }),
+        );
     return h(
       "div",
       { class: "cpanel", hidden: "" },
@@ -2364,6 +2424,7 @@
         h("span", {}, "ETF"),
       ),
       h("small", { class: "chint khint" }),
+      h("div", { class: "cdiv-row" }, h("span", {}, "Dividendos"), divBox),
       slider("Movimientos al año", "cperyear", 12),
       slider("% del fondo que mueves cada vez", "cpct", 100),
       h(
@@ -2458,6 +2519,17 @@
         f.providers.some((p) => p.kind === "index"));
     $(".cpanel", row).hidden = !open;
     setText($('[data-cact="toggle"]', row), open ? "▴" : "▾");
+    if (f.custom) {
+      const di = $("[data-cyield]", row);
+      if (di && document.activeElement !== di) {
+        const v = round(f.yield, 2);
+        if (Math.abs(Number(di.value) - v) > 0.004 || di.value === "")
+          di.value = v;
+      }
+    } else {
+      const dv = $(".cdiv-val", row);
+      if (dv) setText(dv, `${comma(f.yield, 2)} %`);
+    }
     [
       ["cperyear", o.perYear, (v) => `${v} al año`],
       ["cpct", o.pct, (v) => `${comma(v, 1)} %`],
