@@ -1222,6 +1222,85 @@ button.ghost {
   word-wrap: break-word;
 }
 
+/* ---- Distribución del fondo (botón en vista ampliada y ventana de tablas) ---- */
+.cpanel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.25rem;
+}
+.dist-btn {
+  font-size: 0.75rem;
+  padding: 0.25rem 0.65rem;
+}
+.dist-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.dist-dlg {
+  width: min(58rem, 95vw);
+}
+#dist-body {
+  padding: 0.7rem 0.85rem;
+  overflow-y: auto;
+}
+#dist-body .note {
+  margin: 0 0 0.6rem;
+}
+.dist-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
+}
+@media (max-width: 760px) {
+  .dist-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.dist-sec h3 {
+  font-size: 0.84rem;
+  color: var(--accent);
+  margin: 0 0 0.35rem;
+}
+.dist-sec .tbl-wrap {
+  background: #0d131d;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  overflow-x: auto;
+}
+.dist-tbl {
+  margin: 0;
+}
+.dist-tbl thead th {
+  background: rgba(255, 255, 255, 0.035);
+  border-bottom: 1px solid var(--line);
+}
+.dist-tbl th,
+.dist-tbl td {
+  padding: 0.28rem 0.5rem;
+  border-right: 1px solid rgba(34, 44, 61, 0.75);
+}
+.dist-tbl th:last-child,
+.dist-tbl td:last-child {
+  border-right: 0;
+}
+.dist-tbl tbody tr {
+  border-bottom: 1px solid rgba(34, 44, 61, 0.75);
+}
+.dist-tbl tbody tr:last-child {
+  border-bottom: 0;
+}
+.dist-tbl tr.dist-other td {
+  color: var(--muted);
+  font-style: italic;
+  background: rgba(255, 255, 255, 0.02);
+  border-top: 1px solid var(--line);
+}
+.dist-tbl .num {
+  font-variant-numeric: tabular-nums;
+}
+
 /* Mientras se mueve un slider, lo que se calcula después (riesgo y estrategias) se atenúa */
 #risk-total,
 #strategies {

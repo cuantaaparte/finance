@@ -557,7 +557,8 @@
         if (openCustom.has(id)) openCustom.delete(id);
         else openCustom.add(id);
         refresh(false);
-      } else if (a === "edit") openFundDialog(id);
+      } else if (a === "dist") openDistDialog(id);
+      else if (a === "edit") openFundDialog(id);
       else if (a === "del") deleteFund(id);
     });
     return box;
@@ -1998,6 +1999,148 @@
     });
   }
 
+  /* ---------- Distribución de cada fondo (empresas y países) ---------- */
+  function openDistDialog(id) {
+    const f = config.FUNDS.find((x) => x.id === id);
+    if (!f) return;
+    const dlg = $("#dist-dlg"),
+      body = $("#dist-body");
+    $("#dist-title").textContent = `📊 Distribución · ${f.name}`;
+    const srcId = f.custom ? f.mimic?.fund || null : f.id;
+    const dist = srcId ? App.fundDistributions?.funds?.[srcId] : null;
+    if (!dist) {
+      body.replaceChildren(
+        h(
+          "p",
+          { class: "note" },
+          "Este fondo personalizado es inventado y todavía no tiene datos de distribución configurados.",
+        ),
+      );
+      if (!dlg.open) dlg.showModal();
+      return;
+    }
+    const fmtPct = (v) => v.toFixed(1).replace(".", ",") + " %";
+    const holdings = (dist.holdings || []).slice(0, 20);
+    const hSum = holdings.reduce((a, [, p]) => a + p, 0);
+    const hRem = Math.max(0, round(100 - hSum, 2));
+    const hRows = holdings.map(([name, p, sector]) =>
+      h(
+        "tr",
+        {},
+        h("td", {}, name),
+        h("td", { class: "num" }, fmtPct(p)),
+        h("td", {}, sector || ""),
+      ),
+    );
+    if (holdings.length === 20 && hRem > 0.05) {
+      hRows.push(
+        h(
+          "tr",
+          { class: "dist-other" },
+          h("td", {}, "Otros"),
+          h("td", { class: "num" }, fmtPct(hRem)),
+          h("td", {}, ""),
+        ),
+      );
+    }
+
+    const countries = (dist.countries || []).slice(0, 20);
+    const cSum = countries.reduce((a, [, p]) => a + p, 0);
+    const cRem = Math.max(0, round(100 - cSum, 2));
+    const cRows = countries.map(([country, p]) =>
+      h(
+        "tr",
+        {},
+        h("td", {}, country),
+        h("td", { class: "num" }, fmtPct(p)),
+      ),
+    );
+    if (countries.length === 20 && cRem > 0.05) {
+      cRows.push(
+        h(
+          "tr",
+          { class: "dist-other" },
+          h("td", {}, "Otros"),
+          h("td", { class: "num" }, fmtPct(cRem)),
+        ),
+      );
+    }
+
+    const mimBase = f.custom && f.mimic ? config.FUNDS.find((x) => x.id === f.mimic.fund) : null;
+    const notes = [];
+    if (mimBase)
+      notes.push(`Distribución heredada del fondo imitado (${mimBase.name}).`);
+    if (dist.note) notes.push(dist.note);
+    if (App.fundDistributions?.updated)
+      notes.push(`Datos orientativos de referencia (${App.fundDistributions.updated}).`);
+
+    body.replaceChildren(
+      notes.length ? h("p", { class: "note" }, notes.join(" ")) : null,
+      h(
+        "div",
+        { class: "dist-grid" },
+        h(
+          "div",
+          { class: "dist-sec" },
+          h("h3", {}, dist.entityLabel ? `Top ${holdings.length} emisores` : `Top ${holdings.length} empresas`),
+          h(
+            "div",
+            { class: "tbl-wrap" },
+            h(
+              "table",
+              { class: "tax-tbl dist-tbl" },
+              h(
+                "thead",
+                {},
+                h(
+                  "tr",
+                  {},
+                  h("th", {}, dist.entityLabel || "Empresa"),
+                  h("th", { class: "num" }, "Participación"),
+                  h("th", {}, "Sector"),
+                ),
+              ),
+              h("tbody", {}, ...hRows),
+            ),
+          ),
+        ),
+        h(
+          "div",
+          { class: "dist-sec" },
+          h("h3", {}, countries.length > 1 ? `Top ${countries.length} países` : "País"),
+          h(
+            "div",
+            { class: "tbl-wrap" },
+            h(
+              "table",
+              { class: "tax-tbl dist-tbl" },
+              h(
+                "thead",
+                {},
+                h(
+                  "tr",
+                  {},
+                  h("th", {}, "País"),
+                  h("th", { class: "num" }, "Participación"),
+                ),
+              ),
+              h("tbody", {}, ...cRows),
+            ),
+          ),
+        ),
+      ),
+    );
+    if (!dlg.open) dlg.showModal();
+  }
+
+  function initDistDlg() {
+    const dlg = $("#dist-dlg");
+    $("#dist-close").addEventListener("click", () => dlg.close());
+    dlg.addEventListener("click", (e) => {
+      if (e.target === dlg) dlg.close();
+    });
+  }
+
   /** Cargar un supuesto: sus datos sustituyen a los actuales, pero tus fondos personalizados se quedan y se añaden los del supuesto (solo los borras tú). */
   function loadScenario(sc) {
     const next = scenarioCode.clean(sc.state),
@@ -2233,6 +2376,20 @@
         "small",
         { class: "chint tnote" },
         "Sin impuestos, mover dinero no cambia el resultado.",
+      ),
+      h(
+        "div",
+        { class: "cpanel-actions" },
+        h(
+          "button",
+          {
+            type: "button",
+            class: "btn ghost dist-btn",
+            "data-cact": "dist",
+            "data-cid": f.id,
+          },
+          "📊 Distribución",
+        ),
       ),
     );
   }
@@ -2932,6 +3089,7 @@
     chart.init($("#chart"), $("#tip"));
     initTax();
     initFundDlg();
+    initDistDlg();
     // Mientras un slider está pulsado no se calcula lo pesado (riesgo y estrategias), aunque pares un momento: se hace al soltarlo
     document.addEventListener(
       "pointerdown",
